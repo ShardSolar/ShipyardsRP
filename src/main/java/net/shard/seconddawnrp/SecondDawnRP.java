@@ -35,12 +35,15 @@ import net.shard.seconddawnrp.tasksystem.registry.TaskRegistry;
 import net.shard.seconddawnrp.tasksystem.repository.JsonOpsTaskPoolRepository;
 import net.shard.seconddawnrp.tasksystem.repository.JsonTaskStateRepository;
 import net.shard.seconddawnrp.tasksystem.repository.OpsTaskPoolRepository;
+import net.shard.seconddawnrp.tasksystem.repository.SqlOpsTaskPoolRepository;
+import net.shard.seconddawnrp.tasksystem.repository.SqlTaskStateRepository;
 import net.shard.seconddawnrp.tasksystem.repository.TaskStateRepository;
 import net.shard.seconddawnrp.tasksystem.service.TaskPermissionService;
 import net.shard.seconddawnrp.tasksystem.service.TaskRewardService;
 import net.shard.seconddawnrp.tasksystem.service.TaskService;
 import net.shard.seconddawnrp.tasksystem.network.ModNetworking;
 import net.shard.seconddawnrp.tasksystem.terminal.JsonTaskTerminalRepository;
+import net.shard.seconddawnrp.tasksystem.terminal.SqlTerminalRepository;
 import net.shard.seconddawnrp.tasksystem.terminal.TaskTerminalManager;
 import net.shard.seconddawnrp.tasksystem.terminal.TaskTerminalRepository;
 import net.shard.seconddawnrp.tasksystem.terminal.TerminalInteractListener;
@@ -75,14 +78,12 @@ public class SecondDawnRP implements ModInitializer {
 
         Path configDir = Path.of("config");
 
-        // Database bootstrap
+        // ── Database bootstrap ────────────────────────────────────────────
         DatabaseConfig databaseConfig = new DatabaseConfig(configDir);
         DATABASE_MANAGER = new DatabaseManager(databaseConfig);
 
-
         try {
             DATABASE_MANAGER.init();
-
             DatabaseBootstrap databaseBootstrap = new DatabaseBootstrap(
                     DATABASE_MANAGER,
                     new DatabaseMigrations()
@@ -94,22 +95,25 @@ public class SecondDawnRP implements ModInitializer {
 
         ProfileRepository profileRepository = new SqlProfileRepository(DATABASE_MANAGER);
 
+        // ── Task state — SQL primary, JSON backup kept on disk ────────────
         JsonTaskStateRepository jsonTaskStateRepository = new JsonTaskStateRepository(configDir);
         try {
             jsonTaskStateRepository.init();
         } catch (Exception e) {
-            throw new RuntimeException("Failed to initialize task state repository", e);
+            throw new RuntimeException("Failed to initialize JSON task state backup", e);
         }
-        TaskStateRepository taskStateRepository = jsonTaskStateRepository;
+        TaskStateRepository taskStateRepository = new SqlTaskStateRepository(DATABASE_MANAGER);
 
+        // ── Ops task pool — SQL primary, JSON backup kept on disk ─────────
         JsonOpsTaskPoolRepository jsonOpsTaskPoolRepository = new JsonOpsTaskPoolRepository(configDir);
         try {
             jsonOpsTaskPoolRepository.init();
         } catch (Exception e) {
-            throw new RuntimeException("Failed to initialize ops task pool repository", e);
+            throw new RuntimeException("Failed to initialize JSON ops pool backup", e);
         }
-        OpsTaskPoolRepository opsTaskPoolRepository = jsonOpsTaskPoolRepository;
+        OpsTaskPoolRepository opsTaskPoolRepository = new SqlOpsTaskPoolRepository(DATABASE_MANAGER);
 
+        // ── Profile + service wiring ──────────────────────────────────────
         DefaultProfileFactory defaultProfileFactory = new DefaultProfileFactory();
         PROFILE_MANAGER = new PlayerProfileManager(profileRepository, defaultProfileFactory);
 
@@ -150,7 +154,27 @@ public class SecondDawnRP implements ModInitializer {
                 TASK_PERMISSION_SERVICE = new TaskPermissionService(PERMISSION_SERVICE);
                 System.out.println("[SecondDawnRP] LuckPerms integration initialized.");
             } catch (Exception e) {
-                System.out.println("[SecondDawnRP] LuckPerms not ready in this environment. Continuing without LP sync.");
+                System.out.println("[SecondDawnRP] LuckPerms not ready. Continuing without LP sync.");
+            }
+        });
+
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            try {
+                TaskJsonLoader.load(server.getResourceManager());
+
+                // Reload terminals now that DB connection is guaranteed live
+                TERMINAL_MANAGER.reload();
+
+                LuckPerms luckPerms = LuckPermsProvider.get();
+                LuckPermsGroupMapper groupMapper = new LuckPermsGroupMapper();
+                ProfileSyncService syncService = new LuckPermsSyncService(luckPerms, groupMapper);
+
+                PROFILE_SERVICE = new PlayerProfileService(PROFILE_MANAGER, syncService);
+                PERMISSION_SERVICE = new PermissionService(luckPerms);
+                TASK_PERMISSION_SERVICE = new TaskPermissionService(PERMISSION_SERVICE);
+                System.out.println("[SecondDawnRP] LuckPerms integration initialized.");
+            } catch (Exception e) {
+                System.out.println("[SecondDawnRP] LuckPerms not ready. Continuing without LP sync.");
             }
         });
 
@@ -185,21 +209,18 @@ public class SecondDawnRP implements ModInitializer {
                     throw new RuntimeException("Failed to close database manager", e);
                 }
             }
-
-
         });
 
+        // ── Terminals — SQL primary, JSON backup kept on disk ─────────────
         JsonTaskTerminalRepository jsonTaskTerminalRepository = new JsonTaskTerminalRepository(configDir);
         try {
             jsonTaskTerminalRepository.init();
         } catch (Exception e) {
-            throw new RuntimeException("Failed to initialize task terminal repository", e);
+            throw new RuntimeException("Failed to initialize JSON terminal backup", e);
         }
-        TaskTerminalRepository taskTerminalRepository = jsonTaskTerminalRepository;
+        TaskTerminalRepository taskTerminalRepository = new SqlTerminalRepository(DATABASE_MANAGER);
         TERMINAL_MANAGER = new TaskTerminalManager(taskTerminalRepository, TASK_SERVICE, PROFILE_MANAGER);
         new TerminalInteractListener(TERMINAL_MANAGER).register();
-
-
     }
 
     public static Identifier id(String path) {

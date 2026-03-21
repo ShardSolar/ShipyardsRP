@@ -6,7 +6,7 @@ import net.minecraft.network.codec.PacketCodec;
 import java.util.ArrayList;
 import java.util.List;
 
-public record TerminalScreenOpenData(List<TerminalTaskEntry> tasks) {
+public record TerminalScreenOpenData(String terminalLabel, List<TerminalTaskEntry> tasks) {
 
     public record TerminalTaskEntry(
             String taskId,
@@ -50,6 +50,7 @@ public record TerminalScreenOpenData(List<TerminalTaskEntry> tasks) {
             PacketCodec.of(TerminalScreenOpenData::write, TerminalScreenOpenData::read);
 
     private void write(RegistryByteBuf buf) {
+        buf.writeString(terminalLabel);
         buf.writeInt(tasks.size());
         for (TerminalTaskEntry entry : tasks) {
             TerminalTaskEntry.CODEC.encode(buf, entry);
@@ -57,11 +58,12 @@ public record TerminalScreenOpenData(List<TerminalTaskEntry> tasks) {
     }
 
     private static TerminalScreenOpenData read(RegistryByteBuf buf) {
+        String label = buf.readString();
         int count = buf.readInt();
         List<TerminalTaskEntry> entries = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             entries.add(TerminalTaskEntry.CODEC.decode(buf));
         }
-        return new TerminalScreenOpenData(entries);
+        return new TerminalScreenOpenData(label, entries);
     }
 }

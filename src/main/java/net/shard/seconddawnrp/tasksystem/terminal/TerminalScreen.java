@@ -88,12 +88,29 @@ public class TerminalScreen extends HandledScreen<TerminalScreenHandler> {
     // ── Header ────────────────────────────────────────────────────────────────
 
     private void drawHeader(DrawContext context, int x, int y) {
+        String terminalLabel = handler.getTerminalLabel();
+
+        // Left panel — "AVAILABLE TASKS" + terminal type badge
         int lw = this.textRenderer.getWidth("AVAILABLE TASKS");
         context.drawText(this.textRenderer, "AVAILABLE TASKS",
                 x + LIST_X + (LIST_WIDTH - lw) / 2,
                 y + TAB_Y + (TAB_H - 8) / 2 + 1,
                 0xFF8FD7E8, false);
 
+        // Terminal type label — shown below the panel header, small
+        int badgeColor = switch (terminalLabel) {
+            case "PUBLIC"      -> 0xFF4adeb8;
+            case "UNASSIGNED"  -> 0xFF888888;
+            case "COMMAND"     -> 0xFFe8a040;
+            default            -> 0xFF8FD7E8; // division name — teal
+        };
+        int tlw = this.textRenderer.getWidth(terminalLabel);
+        context.drawText(this.textRenderer, terminalLabel,
+                x + LIST_X + (LIST_WIDTH - tlw) / 2,
+                y + TAB_Y + (TAB_H - 8) / 2 + 11,
+                badgeColor, false);
+
+        // Right panel label
         int dw = this.textRenderer.getWidth("TASK DETAILS");
         context.drawText(this.textRenderer, "TASK DETAILS",
                 x + DETAIL_X + (DETAIL_WIDTH - dw) / 2,

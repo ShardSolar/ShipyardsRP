@@ -18,15 +18,29 @@ public final class DatabaseManager implements AutoCloseable {
     public void init() throws SQLException, IOException, ClassNotFoundException {
         Files.createDirectories(config.getDatabaseFile().getParent());
         Class.forName("org.sqlite.JDBC");
-        this.connection = DriverManager.getConnection(config.getJdbcUrl());
-        this.connection.setAutoCommit(true);
+        this.connection = openConnection();
     }
 
     public Connection getConnection() throws SQLException {
         if (connection == null || connection.isClosed()) {
-            throw new SQLException("Database connection is not initialized or already closed.");
+            try {
+                connection = openConnection();
+            } catch (Exception e) {
+                throw new SQLException("Failed to reconnect to database", e);
+            }
         }
         return connection;
+    }
+
+    private Connection openConnection() throws SQLException {
+        Connection conn = DriverManager.getConnection(config.getJdbcUrl());
+        conn.setAutoCommit(true);
+        // Enable WAL mode for better concurrent read performance
+        try (var stmt = conn.createStatement()) {
+            stmt.execute("PRAGMA journal_mode=WAL");
+            stmt.execute("PRAGMA foreign_keys=ON");
+        }
+        return conn;
     }
 
     @Override

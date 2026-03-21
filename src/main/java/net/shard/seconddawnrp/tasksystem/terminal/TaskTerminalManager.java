@@ -31,7 +31,12 @@ public class TaskTerminalManager {
         this.repository = Objects.requireNonNull(repository, "repository");
         this.taskService = Objects.requireNonNull(taskService, "taskService");
         this.profileManager = Objects.requireNonNull(profileManager, "profileManager");
-        this.entries.addAll(repository.loadAll());
+        // Don't load here — call reload() after server starts
+    }
+
+    public void reload() {
+        entries.clear();
+        entries.addAll(repository.loadAll());
     }
 
     public boolean isTerminal(World world, BlockPos pos) {
@@ -137,12 +142,16 @@ public class TaskTerminalManager {
 
     public TerminalScreenOpenData buildOpeningData(ServerPlayerEntity player, World world, BlockPos pos) {
         PlayerProfile profile = profileManager.getLoadedProfile(player.getUuid());
-        if (profile == null) return new TerminalScreenOpenData(List.of());
+        if (profile == null) return new TerminalScreenOpenData("TERMINAL", List.of());
 
         Optional<TaskTerminalEntry> optional = getTerminal(world, pos);
-        if (optional.isEmpty()) return new TerminalScreenOpenData(List.of());
+        if (optional.isEmpty()) return new TerminalScreenOpenData("TERMINAL", List.of());
 
         TaskTerminalEntry terminal = optional.get();
+
+        // Build the label — PUBLIC or division name
+        String label = buildTerminalLabel(terminal);
+
         List<OpsTaskPoolEntry> available = getAvailableTasksForTerminal(terminal, profile);
 
         List<TerminalScreenOpenData.TerminalTaskEntry> entries = available.stream()
@@ -158,7 +167,25 @@ public class TaskTerminalManager {
                 ))
                 .toList();
 
-        return new TerminalScreenOpenData(entries);
+        return new TerminalScreenOpenData(label, entries);
+    }
+
+    private String buildTerminalLabel(TaskTerminalEntry terminal) {
+        if (terminal.getType() == TerminalType.PUBLIC_BOARD) {
+            return "PUBLIC";
+        }
+        // DIVISION_BOARD — show division name(s) or UNASSIGNED if none set
+        List<Division> allowed = terminal.getAllowedDivisions();
+        if (allowed == null || allowed.isEmpty()) {
+            return "UNASSIGNED";
+        }
+        if (allowed.size() == 1) {
+            return allowed.get(0).name();
+        }
+        // Multiple divisions — join them
+        return allowed.stream()
+                .map(Division::name)
+                .collect(java.util.stream.Collectors.joining(" / "));
     }
 
     private String formatObjectiveType(net.shard.seconddawnrp.tasksystem.data.TaskObjectiveType type) {

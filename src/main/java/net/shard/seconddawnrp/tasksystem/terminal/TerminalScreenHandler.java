@@ -14,12 +14,13 @@ import java.util.List;
 public class TerminalScreenHandler extends ScreenHandler {
 
     private final List<TerminalTaskEntry> tasks;
+    private final String terminalLabel;
     private int selectedIndex;
 
-    // Client-side constructor — called by ExtendedScreenHandlerType via packet codec
     public TerminalScreenHandler(int syncId, PlayerInventory playerInventory, TerminalScreenOpenData data) {
         super(ModScreenHandlers.TERMINAL_SCREEN, syncId);
         this.tasks = new ArrayList<>(data.tasks());
+        this.terminalLabel = data.terminalLabel();
         this.selectedIndex = tasks.isEmpty() ? -1 : 0;
     }
 
@@ -40,6 +41,10 @@ public class TerminalScreenHandler extends ScreenHandler {
     public TerminalTaskEntry getSelectedTask() {
         if (selectedIndex < 0 || selectedIndex >= tasks.size()) return null;
         return tasks.get(selectedIndex);
+    }
+
+    public String getTerminalLabel() {
+        return terminalLabel != null ? terminalLabel : "TERMINAL";
     }
 
     @Override

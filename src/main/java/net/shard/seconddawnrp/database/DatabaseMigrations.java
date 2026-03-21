@@ -8,7 +8,7 @@ import java.sql.Statement;
 
 public final class DatabaseMigrations {
 
-    public static final int CURRENT_SCHEMA_VERSION = 1;
+    public static final int CURRENT_SCHEMA_VERSION = 2;
 
     public void migrate(Connection connection) throws SQLException {
         createSchemaVersionTableIfMissing(connection);
@@ -19,6 +19,12 @@ public final class DatabaseMigrations {
             applyVersion1(connection);
             setSchemaVersion(connection, 1);
             currentVersion = 1;
+        }
+
+        if (currentVersion < 2) {
+            applyVersion2(connection);
+            setSchemaVersion(connection, 2);
+            currentVersion = 2;
         }
 
         if (currentVersion > CURRENT_SCHEMA_VERSION) {
@@ -53,7 +59,6 @@ public final class DatabaseMigrations {
         try (Statement delete = connection.createStatement()) {
             delete.executeUpdate("DELETE FROM schema_version");
         }
-
         try (PreparedStatement insert = connection.prepareStatement(
                 "INSERT INTO schema_version(version) VALUES (?)")) {
             insert.setInt(1, version);
@@ -75,7 +80,6 @@ public final class DatabaseMigrations {
                             + "supervisor_uuid TEXT"
                             + ")"
             );
-
             statement.execute(
                     "CREATE TABLE IF NOT EXISTS player_billets ("
                             + "player_uuid TEXT NOT NULL, "
@@ -83,7 +87,6 @@ public final class DatabaseMigrations {
                             + "PRIMARY KEY (player_uuid, billet_id)"
                             + ")"
             );
-
             statement.execute(
                     "CREATE TABLE IF NOT EXISTS player_certifications ("
                             + "player_uuid TEXT NOT NULL, "
@@ -91,7 +94,6 @@ public final class DatabaseMigrations {
                             + "PRIMARY KEY (player_uuid, certification_id)"
                             + ")"
             );
-
             statement.execute(
                     "CREATE TABLE IF NOT EXISTS player_active_tasks ("
                             + "player_uuid TEXT NOT NULL, "
@@ -105,7 +107,6 @@ public final class DatabaseMigrations {
                             + "PRIMARY KEY (player_uuid, task_id)"
                             + ")"
             );
-
             statement.execute(
                     "CREATE TABLE IF NOT EXISTS player_completed_tasks ("
                             + "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -115,6 +116,44 @@ public final class DatabaseMigrations {
                             + "assignment_source TEXT NOT NULL, "
                             + "completed_at INTEGER NOT NULL, "
                             + "reward_points_granted INTEGER NOT NULL"
+                            + ")"
+            );
+        }
+    }
+
+    private void applyVersion2(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+
+            // Ops task pool
+            statement.execute(
+                    "CREATE TABLE IF NOT EXISTS ops_task_pool ("
+                            + "task_id TEXT PRIMARY KEY, "
+                            + "display_name TEXT NOT NULL, "
+                            + "description TEXT NOT NULL, "
+                            + "division TEXT NOT NULL, "
+                            + "objective_type TEXT NOT NULL, "
+                            + "target_id TEXT NOT NULL, "
+                            + "required_amount INTEGER NOT NULL, "
+                            + "reward_points INTEGER NOT NULL, "
+                            + "officer_confirmation_required INTEGER NOT NULL, "
+                            + "created_by_uuid TEXT, "
+                            + "created_at INTEGER NOT NULL, "
+                            + "status TEXT NOT NULL, "
+                            + "assigned_player_uuid TEXT, "
+                            + "assigned_by_uuid TEXT, "
+                            + "pooled_division TEXT, "
+                            + "review_note TEXT"
+                            + ")"
+            );
+
+            // Task terminals
+            statement.execute(
+                    "CREATE TABLE IF NOT EXISTS task_terminals ("
+                            + "world_key TEXT NOT NULL, "
+                            + "block_pos_long INTEGER NOT NULL, "
+                            + "terminal_type TEXT NOT NULL, "
+                            + "allowed_divisions TEXT NOT NULL, "
+                            + "PRIMARY KEY (world_key, block_pos_long)"
                             + ")"
             );
         }
