@@ -68,6 +68,7 @@ public class SecondDawnRP implements ModInitializer {
         ItemGroupEvents.modifyEntriesEvent(ItemGroups.TOOLS).register(entries -> {
             entries.add(ModItems.TASK_PAD);
             entries.add(ModItems.OPERATIONS_PAD);
+            entries.add(ModItems.TASK_TERMINAL_TOOL);
         });
 
         ModScreenHandlers.register();
