@@ -52,20 +52,20 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
     private static final int DETAIL_BUTTON_H   = 12;
     private static final int DETAIL_BUTTON_GAP = 4;
 
-    private static final int CR_X       = 22;
-    private static final int CR_W       = 192;
-    private static final int CR_ROW_H   = 12;
-    private static final int CR_DESC_H  = 38;
-    private static final int DESC_MAX   = 192;
+    private static final int CR_X      = 22;
+    private static final int CR_W      = 192;
+    private static final int CR_ROW_H  = 12;
+    private static final int CR_DESC_H = 38;
+    private static final int DESC_MAX  = 192;
 
-    private static final int CR_Y_TASKID  = 62;
-    private static final int CR_Y_NAME    = 78;
-    private static final int CR_Y_DESC    = 94;
-    private static final int CR_Y_DIV     = 136;
-    private static final int CR_Y_OBJ     = 152;
-    private static final int CR_Y_TARGET  = 168;
-    private static final int CR_Y_AMOUNT  = 184;
-    private static final int CR_Y_REWARD  = 196;
+    // CREATE tab field Y positions — TASK_ID row removed, everything shifts up
+    private static final int CR_Y_NAME   = 62;
+    private static final int CR_Y_DESC   = 78;
+    private static final int CR_Y_DIV    = 120;
+    private static final int CR_Y_OBJ    = 136;
+    private static final int CR_Y_TARGET = 152;
+    private static final int CR_Y_AMOUNT = 168;
+    private static final int CR_Y_REWARD = 180;
 
     private static final int CR_RX       = 220;
     private static final int CR_Y_APPROV = 62;
@@ -75,9 +75,7 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
     private static final int CR_BTN_W    = 106;
     private static final int CR_BTN_H    = 14;
 
-    // How many task rows fit in the list panel
-    private static final int VISIBLE_ROWS = LIST_HEIGHT / ROW_HEIGHT;
-    // How many detail lines fit in the detail panel (leaving 18px for buttons)
+    private static final int VISIBLE_ROWS        = LIST_HEIGHT / ROW_HEIGHT;
     private static final int DETAIL_LINE_H       = 10;
     private static final int DETAIL_TITLE_H      = 14;
     private static final int DETAIL_USABLE_H     = DETAIL_HEIGHT - 18 - DETAIL_TITLE_H;
@@ -88,20 +86,20 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
     private int detailScrollOffset = 0;
 
     // ── Form state ────────────────────────────────────────────────────────────
-    private AdminTab     selectedTab         = AdminTab.TASKS;
-    private CreateField  selectedCreateField = CreateField.TASK_ID;
-    private AssignField  selectedAssignField = AssignField.MODE;
-    private AssignMode   assignMode          = AssignMode.PLAYER;
+    private AdminTab          selectedTab         = AdminTab.TASKS;
+    private CreateField       selectedCreateField = CreateField.DISPLAY_NAME;
+    private AssignField       selectedAssignField = AssignField.MODE;
+    private AssignMode        assignMode          = AssignMode.PLAYER;
 
-    private String  createTaskId                      = "";
-    private String  createDisplayName                 = "";
-    private String  createDescription                 = "";
-    private Division      createDivision              = Division.OPERATIONS;
-    private TaskObjectiveType createObjectiveType     = TaskObjectiveType.BREAK_BLOCK;
-    private String  createTargetId                    = "";
-    private int     createRequiredAmount              = 1;
-    private int     createRewardPoints                = 10;
-    private boolean createOfficerConfirmationRequired = false;
+    // TASK_ID removed — generated server-side from display name
+    private String            createDisplayName                 = "";
+    private String            createDescription                 = "";
+    private Division          createDivision                    = Division.OPERATIONS;
+    private TaskObjectiveType createObjectiveType               = TaskObjectiveType.BREAK_BLOCK;
+    private String            createTargetId                    = "";
+    private int               createRequiredAmount              = 1;
+    private int               createRewardPoints                = 10;
+    private boolean           createOfficerConfirmationRequired = false;
 
     private String   assignPlayerName = "";
     private Division assignDivision   = Division.OPERATIONS;
@@ -111,7 +109,8 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
 
     // ── Enums ─────────────────────────────────────────────────────────────────
     public enum CreateField {
-        TASK_ID, DISPLAY_NAME, DESCRIPTION,
+        // TASK_ID removed — auto-generated server-side
+        DISPLAY_NAME, DESCRIPTION,
         DIVISION, OBJECTIVE_TYPE, TARGET_ID,
         REQUIRED_AMOUNT, REWARD_POINTS,
         OFFICER_CONFIRMATION, CREATE_BUTTON
@@ -120,7 +119,7 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
     public enum AssignMode  { PLAYER, DIVISION, PUBLIC }
     public enum AssignField { MODE, PLAYER_NAME, DIVISION, ASSIGN_BUTTON }
 
-    private enum AdminTab    { TASKS, DETAIL, CREATE, ASSIGN }
+    private enum AdminTab     { TASKS, DETAIL, CREATE, ASSIGN }
     private enum DetailAction { APPROVE, RETURN, FAIL, CANCEL }
 
     // ── Constructor ───────────────────────────────────────────────────────────
@@ -207,21 +206,17 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
         for (int i = 0; i < VISIBLE_ROWS; i++) {
             int dataIndex = i + listScrollOffset;
             if (dataIndex >= tasks.size()) break;
-
             int rx = x+LIST_X, ry = y+LIST_Y+(i*ROW_HEIGHT);
             boolean sel = dataIndex == handler.getSelectedIndex();
             context.fill(rx+2, ry+2, rx+LIST_WIDTH-6, ry+ROW_HEIGHT-4,
                     sel ? 0x14FFFFFF : 0x06000000);
-
             AdminTaskViewModel task = tasks.get(dataIndex);
             context.drawText(this.textRenderer, trim(task.getTitle(),  18), rx+8, ry+6,  0xFFF2E7D5, false);
             context.drawText(this.textRenderer, trim(task.getStatus(), 18), rx+8, ry+16, 0xFFD0D0D0, false);
         }
 
         context.disableScissor();
-
-        drawScrollIndicators(context,
-                x+LIST_X, y+LIST_Y, LIST_WIDTH, LIST_HEIGHT,
+        drawScrollIndicators(context, x+LIST_X, y+LIST_Y, LIST_WIDTH, LIST_HEIGHT,
                 listScrollOffset, tasks.size(), VISIBLE_ROWS);
     }
 
@@ -240,7 +235,6 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
             return;
         }
 
-        // Title always visible, not scrolled
         context.drawText(this.textRenderer, trim(selected.getTitle(), 20), tx, ty, 0xFFF2E7D5, false);
         ty += DETAIL_TITLE_H;
 
@@ -257,33 +251,53 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
         }
 
         context.disableScissor();
-
         drawScrollIndicators(context,
                 x+DETAIL_X, y+DETAIL_Y+DETAIL_TITLE_H,
                 DETAIL_WIDTH, DETAIL_HEIGHT-18-DETAIL_TITLE_H,
                 detailScrollOffset, lines.size(), VISIBLE_DETAIL_LINES);
-
         drawDetailButtons(context, x, y);
     }
 
     private void drawDetailButtons(DrawContext context, int x, int y) {
-        drawDetailActionButton(context, x+DETAIL_BUTTON_X,                                    y+DETAIL_BUTTON_Y, "APP",  DetailAction.APPROVE);
-        drawDetailActionButton(context, x+DETAIL_BUTTON_X+(DETAIL_BUTTON_W+DETAIL_BUTTON_GAP),    y+DETAIL_BUTTON_Y, "BACK", DetailAction.RETURN);
-        drawDetailActionButton(context, x+DETAIL_BUTTON_X+2*(DETAIL_BUTTON_W+DETAIL_BUTTON_GAP),  y+DETAIL_BUTTON_Y, "FAIL", DetailAction.FAIL);
-        drawDetailActionButton(context, x+DETAIL_BUTTON_X+3*(DETAIL_BUTTON_W+DETAIL_BUTTON_GAP),  y+DETAIL_BUTTON_Y, "X",    DetailAction.CANCEL);
+        drawDetailActionButton(context, x+DETAIL_BUTTON_X,                                   y+DETAIL_BUTTON_Y, "APP",  DetailAction.APPROVE);
+        drawDetailActionButton(context, x+DETAIL_BUTTON_X+(DETAIL_BUTTON_W+DETAIL_BUTTON_GAP),   y+DETAIL_BUTTON_Y, "BACK", DetailAction.RETURN);
+        drawDetailActionButton(context, x+DETAIL_BUTTON_X+2*(DETAIL_BUTTON_W+DETAIL_BUTTON_GAP), y+DETAIL_BUTTON_Y, "FAIL", DetailAction.FAIL);
+        drawDetailActionButton(context, x+DETAIL_BUTTON_X+3*(DETAIL_BUTTON_W+DETAIL_BUTTON_GAP), y+DETAIL_BUTTON_Y, "X",    DetailAction.CANCEL);
     }
 
     // ── CREATE tab ────────────────────────────────────────────────────────────
     private void drawCreateTab(DrawContext context, int x, int y) {
-        drawCreateRow(context, x, y, "TASK ID", withCursor(createTaskId,      selectedCreateField == CreateField.TASK_ID),      CR_X, CR_Y_TASKID, CR_ROW_H, selectedCreateField == CreateField.TASK_ID,      CreateField.TASK_ID);
-        drawCreateRow(context, x, y, "NAME",    withCursor(createDisplayName,  selectedCreateField == CreateField.DISPLAY_NAME), CR_X, CR_Y_NAME,   CR_ROW_H, selectedCreateField == CreateField.DISPLAY_NAME, CreateField.DISPLAY_NAME);
+        // Auto-ID hint shown at top
+        String idPreview = createDisplayName.isBlank() ? "auto-generated"
+                : toAutoId(createDisplayName);
+        drawHintText(context, x+CR_X+4, y+CR_Y_NAME-12,
+                "ID: " + idPreview);
+
+        drawCreateRow(context, x, y, "NAME",
+                withCursor(createDisplayName, selectedCreateField == CreateField.DISPLAY_NAME),
+                CR_X, CR_Y_NAME, CR_ROW_H,
+                selectedCreateField == CreateField.DISPLAY_NAME, CreateField.DISPLAY_NAME);
         drawDescriptionArea(context, x, y);
-        drawCreateRow(context, x, y, "DIV",    createDivision.name(),         CR_X, CR_Y_DIV,    CR_ROW_H, selectedCreateField == CreateField.DIVISION,      CreateField.DIVISION);
-        drawCreateRow(context, x, y, "OBJ",    createObjectiveType.name(),    CR_X, CR_Y_OBJ,    CR_ROW_H, selectedCreateField == CreateField.OBJECTIVE_TYPE, CreateField.OBJECTIVE_TYPE);
-        drawCreateRow(context, x, y, "TARGET", withCursor(createTargetId,     selectedCreateField == CreateField.TARGET_ID),    CR_X, CR_Y_TARGET, CR_ROW_H, selectedCreateField == CreateField.TARGET_ID,    CreateField.TARGET_ID);
-        drawCreateRow(context, x, y, "AMOUNT", String.valueOf(createRequiredAmount), CR_X, CR_Y_AMOUNT, CR_ROW_H, selectedCreateField == CreateField.REQUIRED_AMOUNT, CreateField.REQUIRED_AMOUNT);
-        drawCreateRow(context, x, y, "REWARD", String.valueOf(createRewardPoints),   CR_X, CR_Y_REWARD, CR_ROW_H, selectedCreateField == CreateField.REWARD_POINTS,   CreateField.REWARD_POINTS);
-        drawCreateRow(context, x, y, "APPROVAL", createOfficerConfirmationRequired ? "YES" : "NO", CR_RX, CR_Y_APPROV, CR_ROW_H, selectedCreateField == CreateField.OFFICER_CONFIRMATION, CreateField.OFFICER_CONFIRMATION);
+        drawCreateRow(context, x, y, "DIV",    createDivision.name(),
+                CR_X, CR_Y_DIV,    CR_ROW_H,
+                selectedCreateField == CreateField.DIVISION,      CreateField.DIVISION);
+        drawCreateRow(context, x, y, "OBJ",    createObjectiveType.name(),
+                CR_X, CR_Y_OBJ,    CR_ROW_H,
+                selectedCreateField == CreateField.OBJECTIVE_TYPE, CreateField.OBJECTIVE_TYPE);
+        drawCreateRow(context, x, y, "TARGET",
+                withCursor(createTargetId, selectedCreateField == CreateField.TARGET_ID),
+                CR_X, CR_Y_TARGET, CR_ROW_H,
+                selectedCreateField == CreateField.TARGET_ID,    CreateField.TARGET_ID);
+        drawCreateRow(context, x, y, "AMOUNT", String.valueOf(createRequiredAmount),
+                CR_X, CR_Y_AMOUNT, CR_ROW_H,
+                selectedCreateField == CreateField.REQUIRED_AMOUNT, CreateField.REQUIRED_AMOUNT);
+        drawCreateRow(context, x, y, "REWARD", String.valueOf(createRewardPoints),
+                CR_X, CR_Y_REWARD, CR_ROW_H,
+                selectedCreateField == CreateField.REWARD_POINTS,   CreateField.REWARD_POINTS);
+        drawCreateRow(context, x, y, "APPROVAL",
+                createOfficerConfirmationRequired ? "YES" : "NO",
+                CR_RX, CR_Y_APPROV, CR_ROW_H,
+                selectedCreateField == CreateField.OFFICER_CONFIRMATION, CreateField.OFFICER_CONFIRMATION);
         drawHintText(context, x+CR_RX+2, y+CR_Y_HINT1, "LEFT CLICK = UP");
         drawHintText(context, x+CR_RX+2, y+CR_Y_HINT2, "RIGHT CLICK = DOWN");
         drawCreateButton(context, x, y);
@@ -292,7 +306,8 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
     private void drawDescriptionArea(DrawContext context, int x, int y) {
         int x1 = x+CR_X, y1 = y+CR_Y_DESC, x2 = x1+CR_W, y2 = y1+CR_DESC_H;
         boolean focused  = selectedCreateField == CreateField.DESCRIPTION;
-        boolean flashing = focused && validationFlashField == CreateField.DESCRIPTION && validationFlashTicks > 0;
+        boolean flashing = focused && validationFlashField == CreateField.DESCRIPTION
+                && validationFlashTicks > 0;
 
         context.fill(x1, y1, x2, y2, focused ? 0x22FFFFFF : 0x0A000000);
 
@@ -338,9 +353,11 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
 
     private void drawCreateButton(DrawContext context, int x, int y) {
         int x1 = x+CR_RX, y1 = y+CR_Y_CBTN;
-        boolean selected = selectedCreateField == CreateField.CREATE_BUTTON;
-        boolean canCreate = !createTaskId.isBlank() && !createDisplayName.isBlank() && !createDescription.isBlank();
-        int bg = selected ? 0x30FFFFFF : canCreate ? 0x1A00FF88 : 0x0A000000;
+        boolean sel = selectedCreateField == CreateField.CREATE_BUTTON;
+        boolean canCreate = !createDisplayName.isBlank()
+                && !createDescription.isBlank()
+                && !createTargetId.isBlank();
+        int bg = sel ? 0x30FFFFFF : canCreate ? 0x1A00FF88 : 0x0A000000;
         context.fill(x1, y1, x1+CR_BTN_W, y1+CR_BTN_H, bg);
         String text = "CREATE TASK";
         int tw = this.textRenderer.getWidth(text);
@@ -354,7 +371,9 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
         String taskName = selected == null ? "NONE" : selected.getTitle();
         drawAssignRow(context, x, y, "TASK",   trim(taskName, 20),  220, 64,  false);
         drawAssignRow(context, x, y, "MODE",   assignMode.name(),   220, 80,  selectedAssignField == AssignField.MODE);
-        drawAssignRow(context, x, y, "PLAYER", withCursor(assignPlayerName, selectedAssignField == AssignField.PLAYER_NAME), 220, 96, selectedAssignField == AssignField.PLAYER_NAME);
+        drawAssignRow(context, x, y, "PLAYER",
+                withCursor(assignPlayerName, selectedAssignField == AssignField.PLAYER_NAME),
+                220, 96, selectedAssignField == AssignField.PLAYER_NAME);
         drawAssignRow(context, x, y, "DIV",    assignDivision.name(), 220, 112, selectedAssignField == AssignField.DIVISION);
         drawAssignButton(context, x, y, 220, 136, selectedAssignField == AssignField.ASSIGN_BUTTON);
         String hint = switch (assignMode) {
@@ -373,7 +392,8 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
         int x1 = baseX+localX, y1 = baseY+localY, x2 = x1+CR_W, y2 = y1+rowH;
         boolean flashing = selected && validationFlashField == field && validationFlashTicks > 0;
         context.fill(x1, y1, x2, y2, selected ? 0x20FFFFFF : 0x0A000000);
-        context.drawText(this.textRenderer, label,          x1+4,  y1+2, flashing ? 0xFFFF6666 : 0xFFFFB24A, false);
+        context.drawText(this.textRenderer, label,           x1+4,  y1+2,
+                flashing ? 0xFFFF6666 : 0xFFFFB24A, false);
         context.drawText(this.textRenderer, trim(value, 20), x1+58, y1+2, 0xFFF2E7D5, false);
     }
 
@@ -382,7 +402,7 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
                                int localX, int localY, boolean selected) {
         int x1 = baseX+localX, y1 = baseY+localY;
         context.fill(x1, y1, x1+180, y1+12, selected ? 0x20FFFFFF : 0x0A000000);
-        context.drawText(this.textRenderer, label,          x1+4,  y1+2, 0xFF8FD7E8, false);
+        context.drawText(this.textRenderer, label,           x1+4,  y1+2, 0xFF8FD7E8, false);
         context.drawText(this.textRenderer, trim(value, 20), x1+58, y1+2, 0xFFF2E7D5, false);
     }
 
@@ -447,6 +467,15 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
                 : text.substring(0, Math.max(0, maxLength - 3)) + "...";
     }
 
+    // Mirrors the server-side ID generation so the preview is accurate
+    private String toAutoId(String displayName) {
+        return displayName.trim()
+                .toLowerCase()
+                .replaceAll("[^a-z0-9]", "_")
+                .replaceAll("_+", "_")
+                .replaceAll("^_|_$", "");
+    }
+
     // ── Mouse ─────────────────────────────────────────────────────────────────
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
@@ -458,18 +487,17 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
         if (inside(mouseX, mouseY, x+ASSIGN_TAB_X, y+ASSIGN_TAB_Y, ASSIGN_TAB_W, ASSIGN_TAB_H)) { selectedTab = AdminTab.ASSIGN; return true; }
 
         if (selectedTab == AdminTab.CREATE) {
-            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_TASKID,  CR_W, CR_ROW_H))  { selectedCreateField = CreateField.TASK_ID;       return true; }
-            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_NAME,    CR_W, CR_ROW_H))  { selectedCreateField = CreateField.DISPLAY_NAME;   return true; }
-            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_DESC,    CR_W, CR_DESC_H)) { selectedCreateField = CreateField.DESCRIPTION;    return true; }
-            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_DIV,     CR_W, CR_ROW_H))  { selectedCreateField = CreateField.DIVISION;       cycleCreateDivision();      return true; }
-            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_OBJ,     CR_W, CR_ROW_H))  { selectedCreateField = CreateField.OBJECTIVE_TYPE; cycleCreateObjectiveType(); return true; }
-            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_TARGET,  CR_W, CR_ROW_H))  { selectedCreateField = CreateField.TARGET_ID;      return true; }
-            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_AMOUNT,  CR_W, CR_ROW_H))  {
+            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_NAME,   CR_W, CR_ROW_H))  { selectedCreateField = CreateField.DISPLAY_NAME;   return true; }
+            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_DESC,   CR_W, CR_DESC_H)) { selectedCreateField = CreateField.DESCRIPTION;    return true; }
+            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_DIV,    CR_W, CR_ROW_H))  { selectedCreateField = CreateField.DIVISION;       cycleCreateDivision();      return true; }
+            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_OBJ,    CR_W, CR_ROW_H))  { selectedCreateField = CreateField.OBJECTIVE_TYPE; cycleCreateObjectiveType(); return true; }
+            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_TARGET, CR_W, CR_ROW_H))  { selectedCreateField = CreateField.TARGET_ID;      return true; }
+            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_AMOUNT, CR_W, CR_ROW_H))  {
                 selectedCreateField = CreateField.REQUIRED_AMOUNT;
                 if (button == 0) incrementCreateRequiredAmount(); else decrementCreateRequiredAmount();
                 return true;
             }
-            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_REWARD,  CR_W, CR_ROW_H))  {
+            if (inside(mouseX, mouseY, x+CR_X, y+CR_Y_REWARD, CR_W, CR_ROW_H))  {
                 selectedCreateField = CreateField.REWARD_POINTS;
                 if (button == 0) incrementCreateRewardPoints(); else decrementCreateRewardPoints();
                 return true;
@@ -487,9 +515,9 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
         }
 
         if (selectedTab == AdminTab.ASSIGN) {
-            if (inside(mouseX, mouseY, x+220, y+80,  180, 12)) { selectedAssignField = AssignField.MODE;          cycleAssignMode();     return true; }
-            if (inside(mouseX, mouseY, x+220, y+96,  180, 12)) { selectedAssignField = AssignField.PLAYER_NAME;   return true; }
-            if (inside(mouseX, mouseY, x+220, y+112, 180, 12)) { selectedAssignField = AssignField.DIVISION;      cycleAssignDivision(); return true; }
+            if (inside(mouseX, mouseY, x+220, y+80,  180, 12)) { selectedAssignField = AssignField.MODE;        cycleAssignMode();     return true; }
+            if (inside(mouseX, mouseY, x+220, y+96,  180, 12)) { selectedAssignField = AssignField.PLAYER_NAME; return true; }
+            if (inside(mouseX, mouseY, x+220, y+112, 180, 12)) { selectedAssignField = AssignField.DIVISION;    cycleAssignDivision(); return true; }
             if (inside(mouseX, mouseY, x+220, y+136, 100, 14)) { selectedAssignField = AssignField.ASSIGN_BUTTON; sendAssignTaskPacket(); return true; }
         }
 
@@ -497,14 +525,13 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
             AdminTaskViewModel sel = handler.getSelectedTask();
             if (sel != null) {
                 String taskId = sel.getTaskId();
-                if (inside(mouseX, mouseY, x+DETAIL_BUTTON_X,                                    y+DETAIL_BUTTON_Y, DETAIL_BUTTON_W, DETAIL_BUTTON_H)) { sendReviewActionPacket(taskId, "APPROVE"); return true; }
-                if (inside(mouseX, mouseY, x+DETAIL_BUTTON_X+(DETAIL_BUTTON_W+DETAIL_BUTTON_GAP),    y+DETAIL_BUTTON_Y, DETAIL_BUTTON_W, DETAIL_BUTTON_H)) { sendReviewActionPacket(taskId, "RETURN");  return true; }
-                if (inside(mouseX, mouseY, x+DETAIL_BUTTON_X+2*(DETAIL_BUTTON_W+DETAIL_BUTTON_GAP),  y+DETAIL_BUTTON_Y, DETAIL_BUTTON_W, DETAIL_BUTTON_H)) { sendReviewActionPacket(taskId, "FAIL");    return true; }
-                if (inside(mouseX, mouseY, x+DETAIL_BUTTON_X+3*(DETAIL_BUTTON_W+DETAIL_BUTTON_GAP),  y+DETAIL_BUTTON_Y, DETAIL_BUTTON_W, DETAIL_BUTTON_H)) { sendReviewActionPacket(taskId, "CANCEL");  return true; }
+                if (inside(mouseX, mouseY, x+DETAIL_BUTTON_X,                                   y+DETAIL_BUTTON_Y, DETAIL_BUTTON_W, DETAIL_BUTTON_H)) { sendReviewActionPacket(taskId, "APPROVE"); return true; }
+                if (inside(mouseX, mouseY, x+DETAIL_BUTTON_X+(DETAIL_BUTTON_W+DETAIL_BUTTON_GAP),   y+DETAIL_BUTTON_Y, DETAIL_BUTTON_W, DETAIL_BUTTON_H)) { sendReviewActionPacket(taskId, "RETURN");  return true; }
+                if (inside(mouseX, mouseY, x+DETAIL_BUTTON_X+2*(DETAIL_BUTTON_W+DETAIL_BUTTON_GAP), y+DETAIL_BUTTON_Y, DETAIL_BUTTON_W, DETAIL_BUTTON_H)) { sendReviewActionPacket(taskId, "FAIL");    return true; }
+                if (inside(mouseX, mouseY, x+DETAIL_BUTTON_X+3*(DETAIL_BUTTON_W+DETAIL_BUTTON_GAP), y+DETAIL_BUTTON_Y, DETAIL_BUTTON_W, DETAIL_BUTTON_H)) { sendReviewActionPacket(taskId, "CANCEL");  return true; }
             }
         }
 
-        // Task list row clicks — offset by scroll
         if (selectedTab == AdminTab.TASKS || selectedTab == AdminTab.DETAIL || selectedTab == AdminTab.ASSIGN) {
             List<AdminTaskViewModel> tasks = handler.getTasks();
             for (int i = 0; i < VISIBLE_ROWS; i++) {
@@ -528,14 +555,12 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
         int x = this.x, y = this.y;
         int delta = verticalAmount > 0 ? -1 : 1;
 
-        // Scroll the task list when hovering over it
         if (inside(mouseX, mouseY, x+LIST_X, y+LIST_Y, LIST_WIDTH, LIST_HEIGHT)) {
             listScrollOffset = clamp(listScrollOffset + delta, 0,
                     Math.max(0, handler.getTasks().size() - VISIBLE_ROWS));
             return true;
         }
 
-        // Scroll the detail panel when hovering over it
         if (selectedTab == AdminTab.DETAIL
                 && inside(mouseX, mouseY, x+DETAIL_X, y+DETAIL_Y, DETAIL_WIDTH, DETAIL_HEIGHT)) {
             AdminTaskViewModel sel = handler.getSelectedTask();
@@ -598,7 +623,6 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
 
     // ── Validation + send ─────────────────────────────────────────────────────
     private void tryCreateTask() {
-        if (createTaskId.isBlank())      { flashField(CreateField.TASK_ID);      return; }
         if (createDisplayName.isBlank()) { flashField(CreateField.DISPLAY_NAME); return; }
         if (createDescription.isBlank()) { flashField(CreateField.DESCRIPTION);  return; }
         if (createTargetId.isBlank())    { flashField(CreateField.TARGET_ID);    return; }
@@ -613,18 +637,23 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
     }
 
     private void resetCreateForm() {
-        createTaskId = ""; createDisplayName = ""; createDescription = "";
-        createDivision = Division.OPERATIONS;
+        createDisplayName = "";
+        createDescription = "";
+        createDivision    = Division.OPERATIONS;
         createObjectiveType = TaskObjectiveType.BREAK_BLOCK;
-        createTargetId = ""; createRequiredAmount = 1; createRewardPoints = 10;
+        createTargetId    = "";
+        createRequiredAmount = 1;
+        createRewardPoints   = 10;
         createOfficerConfirmationRequired = false;
-        selectedCreateField = CreateField.TASK_ID;
-        validationFlashField = null; validationFlashTicks = 0;
+        selectedCreateField  = CreateField.DISPLAY_NAME;
+        validationFlashField = null;
+        validationFlashTicks = 0;
     }
 
     private void sendCreateTaskPacket() {
+        // Pass empty string for taskId — server generates it from displayName
         ClientPlayNetworking.send(new CreateTaskC2SPacket(
-                createTaskId, createDisplayName, createDescription,
+                "", createDisplayName, createDescription,
                 createDivision.name(), createObjectiveType.name(),
                 createTargetId, createRequiredAmount, createRewardPoints,
                 createOfficerConfirmationRequired));
@@ -643,14 +672,14 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
 
     // ── Field helpers ─────────────────────────────────────────────────────────
     private boolean isCreateTypingField(CreateField field) {
-        return field == CreateField.TASK_ID || field == CreateField.DISPLAY_NAME
-                || field == CreateField.DESCRIPTION || field == CreateField.TARGET_ID;
+        return field == CreateField.DISPLAY_NAME
+                || field == CreateField.DESCRIPTION
+                || field == CreateField.TARGET_ID;
     }
 
     private void appendToSelectedCreateField(char c) {
         if (!isAllowedChar(c)) return;
         switch (selectedCreateField) {
-            case TASK_ID      -> { if (createTaskId.length()      < 32)       createTaskId      += c; }
             case DISPLAY_NAME -> { if (createDisplayName.length() < 48)       createDisplayName += c; }
             case DESCRIPTION  -> { if (createDescription.length() < DESC_MAX) createDescription += c; }
             case TARGET_ID    -> { if (createTargetId.length()    < 48)       createTargetId    += c; }
@@ -660,7 +689,6 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
 
     private void backspaceSelectedCreateField() {
         switch (selectedCreateField) {
-            case TASK_ID      -> createTaskId      = backspace(createTaskId);
             case DISPLAY_NAME -> createDisplayName = backspace(createDisplayName);
             case DESCRIPTION  -> createDescription = backspace(createDescription);
             case TARGET_ID    -> createTargetId    = backspace(createTargetId);
@@ -693,7 +721,6 @@ public class OperationsPadScreen extends HandledScreen<AdminTaskScreenHandler> {
     private boolean isAllowedChar(char c) { return c >= 32 && c != 127; }
     private boolean inside(double mx, double my, int x, int y, int w, int h) { return mx >= x && mx <= x + w && my >= y && my <= y + h; }
 
-    // ── Scroll helpers ────────────────────────────────────────────────────────
     private void clampListScroll(int totalItems) {
         listScrollOffset = clamp(listScrollOffset, 0, Math.max(0, totalItems - VISIBLE_ROWS));
     }

@@ -1,12 +1,15 @@
 package net.shard.seconddawnrp;
 
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
+import net.minecraft.client.gui.screen.ingame.HandledScreens;
 import net.minecraft.item.ItemGroups;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Identifier;
@@ -14,6 +17,18 @@ import net.shard.seconddawnrp.database.DatabaseBootstrap;
 import net.shard.seconddawnrp.database.DatabaseConfig;
 import net.shard.seconddawnrp.database.DatabaseManager;
 import net.shard.seconddawnrp.database.DatabaseMigrations;
+import net.shard.seconddawnrp.gmevent.command.GmEventCommands;
+import net.shard.seconddawnrp.gmevent.data.GmEventConfig;
+import net.shard.seconddawnrp.gmevent.event.GmDamageListener;
+import net.shard.seconddawnrp.gmevent.event.GmMobHitListener;
+import net.shard.seconddawnrp.gmevent.network.GmToolRefreshS2CPacket;
+import net.shard.seconddawnrp.gmevent.repository.GmEventConfigRepository;
+import net.shard.seconddawnrp.gmevent.repository.JsonEncounterTemplateRepository;
+import net.shard.seconddawnrp.gmevent.repository.JsonSpawnBlockRepository;
+import net.shard.seconddawnrp.gmevent.screen.SpawnConfigScreen;
+import net.shard.seconddawnrp.gmevent.screen.SpawnItemScreen;
+import net.shard.seconddawnrp.gmevent.service.GmEventService;
+import net.shard.seconddawnrp.gmevent.service.GmPermissionService;
 import net.shard.seconddawnrp.playerdata.DefaultProfileFactory;
 import net.shard.seconddawnrp.playerdata.LuckPermsGroupMapper;
 import net.shard.seconddawnrp.playerdata.LuckPermsSyncService;
@@ -47,7 +62,7 @@ import net.shard.seconddawnrp.tasksystem.terminal.SqlTerminalRepository;
 import net.shard.seconddawnrp.tasksystem.terminal.TaskTerminalManager;
 import net.shard.seconddawnrp.tasksystem.terminal.TaskTerminalRepository;
 import net.shard.seconddawnrp.tasksystem.terminal.TerminalInteractListener;
-
+import net.shard.seconddawnrp.gmevent.event.MobDeathEventListener;
 import java.nio.file.Path;
 
 public class SecondDawnRP implements ModInitializer {
@@ -63,6 +78,9 @@ public class SecondDawnRP implements ModInitializer {
     public static TaskService TASK_SERVICE;
     public static TaskPermissionService TASK_PERMISSION_SERVICE;
     public static TaskTerminalManager TERMINAL_MANAGER;
+    public static GmEventService GM_EVENT_SERVICE;
+    public static GmPermissionService GM_PERMISSION_SERVICE;
+
 
     @Override
     public void onInitialize() {
@@ -221,6 +239,60 @@ public class SecondDawnRP implements ModInitializer {
         TaskTerminalRepository taskTerminalRepository = new SqlTerminalRepository(DATABASE_MANAGER);
         TERMINAL_MANAGER = new TaskTerminalManager(taskTerminalRepository, TASK_SERVICE, PROFILE_MANAGER);
         new TerminalInteractListener(TERMINAL_MANAGER).register();
+
+        // ── GM Event System ───────────────────────────────────────────────────
+        JsonEncounterTemplateRepository templateRepo =
+                new JsonEncounterTemplateRepository(configDir);
+        try { templateRepo.init(); } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize encounter template repository", e);
+        }
+
+        JsonSpawnBlockRepository spawnBlockRepo = new JsonSpawnBlockRepository(configDir);
+        try { spawnBlockRepo.init(); } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize spawn block repository", e);
+        }
+
+        GmEventConfigRepository gmConfigRepo = new GmEventConfigRepository(configDir);
+        try { gmConfigRepo.init(); } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize GM event config", e);
+        }
+        GmEventConfig gmEventConfig = gmConfigRepo.load();
+
+        GM_PERMISSION_SERVICE = new GmPermissionService(PERMISSION_SERVICE);
+        GM_EVENT_SERVICE = new GmEventService(
+                templateRepo, spawnBlockRepo, TASK_SERVICE, gmEventConfig);
+
+        new MobDeathEventListener(GM_EVENT_SERVICE).register();
+        new GmDamageListener(GM_EVENT_SERVICE).register();
+        new  GmMobHitListener().register();
+
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                GmEventCommands.register(dispatcher)
+        );
+
+
+
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            GmEventService.setServer(server);
+        });
+
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            GM_EVENT_SERVICE.tick(server);
+        });
+
+        ClientPlayNetworking.registerGlobalReceiver(
+                GmToolRefreshS2CPacket.ID,
+                (payload, context) -> context.client().execute(() -> {
+                    var screen = context.client().currentScreen;
+                    if (screen instanceof SpawnConfigScreen s) {
+                        s.getScreenHandler().replaceTemplates(payload.templates());
+                    } else if (screen instanceof SpawnItemScreen s) {
+                        s.getScreenHandler().replaceTemplates(payload.templates());
+                    }
+                })
+        );
+
+
     }
 
     public static Identifier id(String path) {

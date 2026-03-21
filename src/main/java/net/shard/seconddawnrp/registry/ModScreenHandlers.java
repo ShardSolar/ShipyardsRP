@@ -6,6 +6,10 @@ import net.minecraft.registry.Registry;
 import net.minecraft.resource.featuretoggle.FeatureFlags;
 import net.minecraft.screen.ScreenHandlerType;
 import net.shard.seconddawnrp.SecondDawnRP;
+import net.shard.seconddawnrp.gmevent.screen.SpawnConfigScreenHandler;
+import net.shard.seconddawnrp.gmevent.screen.SpawnConfigScreenOpenData;
+import net.shard.seconddawnrp.gmevent.screen.SpawnItemScreenHandler;
+import net.shard.seconddawnrp.gmevent.screen.SpawnItemScreenOpenData;
 import net.shard.seconddawnrp.tasksystem.pad.AdminTaskScreenHandler;
 import net.shard.seconddawnrp.tasksystem.pad.TaskPadOpeningData;
 import net.shard.seconddawnrp.tasksystem.pad.TaskPadScreenHandler;
@@ -33,6 +37,22 @@ public class ModScreenHandlers {
                     Registries.SCREEN_HANDLER,
                     SecondDawnRP.id("terminal"),
                     new ExtendedScreenHandlerType<>(TerminalScreenHandler::new, TerminalScreenOpenData.PACKET_CODEC)
+            );
+
+    public static final ScreenHandlerType<SpawnConfigScreenHandler> SPAWN_CONFIG_SCREEN =
+            Registry.register(
+                    Registries.SCREEN_HANDLER,
+                    SecondDawnRP.id("spawn_config"),
+                    new ExtendedScreenHandlerType<>(SpawnConfigScreenHandler::new,
+                            SpawnConfigScreenOpenData.PACKET_CODEC)
+            );
+
+    public static final ScreenHandlerType<SpawnItemScreenHandler> SPAWN_ITEM_SCREEN =
+            Registry.register(
+                    Registries.SCREEN_HANDLER,
+                    SecondDawnRP.id("spawn_item"),
+                    new ExtendedScreenHandlerType<>(SpawnItemScreenHandler::new,
+                            SpawnItemScreenOpenData.PACKET_CODEC)
             );
 
     public static void register() {

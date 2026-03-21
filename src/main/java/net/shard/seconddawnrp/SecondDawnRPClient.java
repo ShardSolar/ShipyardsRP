@@ -3,6 +3,11 @@ package net.shard.seconddawnrp;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.gui.screen.ingame.HandledScreens;
+import net.shard.seconddawnrp.gmevent.client.GmKeybindings;
+import net.shard.seconddawnrp.gmevent.client.GmKeyInputHandler;
+import net.shard.seconddawnrp.gmevent.network.GmToolRefreshS2CPacket;
+import net.shard.seconddawnrp.gmevent.screen.SpawnConfigScreen;
+import net.shard.seconddawnrp.gmevent.screen.SpawnItemScreen;
 import net.shard.seconddawnrp.registry.ModScreenHandlers;
 import net.shard.seconddawnrp.tasksystem.network.OpsPadRefreshS2CPacket;
 import net.shard.seconddawnrp.tasksystem.pad.AdminTaskScreenHandler;
@@ -17,10 +22,18 @@ public class SecondDawnRPClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        // Screen registrations
         HandledScreens.register(ModScreenHandlers.TASK_PAD_SCREEN, TaskPadScreen::new);
         HandledScreens.register(ModScreenHandlers.ADMIN_TASK_SCREEN, OperationsPadScreen::new);
         HandledScreens.register(ModScreenHandlers.TERMINAL_SCREEN, TerminalScreen::new);
+        HandledScreens.register(ModScreenHandlers.SPAWN_CONFIG_SCREEN, SpawnConfigScreen::new);
+        HandledScreens.register(ModScreenHandlers.SPAWN_ITEM_SCREEN, SpawnItemScreen::new);
 
+        // GM keybindings
+        GmKeybindings.register();
+        GmKeyInputHandler.register();
+
+        // Ops PADD refresh
         ClientPlayNetworking.registerGlobalReceiver(
                 OpsPadRefreshS2CPacket.ID,
                 (payload, context) -> context.client().execute(() -> {
@@ -28,7 +41,6 @@ public class SecondDawnRPClient implements ClientModInitializer {
                         List<AdminTaskViewModel> views = payload.tasks().stream()
                                 .map(SecondDawnRPClient::toViewModel)
                                 .toList();
-
                         AdminTaskScreenHandler handler = screen.getScreenHandler();
                         if (handler != null) {
                             handler.replaceTasks(views);
@@ -37,17 +49,26 @@ public class SecondDawnRPClient implements ClientModInitializer {
                     }
                 })
         );
+
+        // GM tool refresh — updates open GM screens when a template is saved
+        ClientPlayNetworking.registerGlobalReceiver(
+                GmToolRefreshS2CPacket.ID,
+                (payload, context) -> context.client().execute(() -> {
+                    var screen = context.client().currentScreen;
+                    if (screen instanceof SpawnConfigScreen s) {
+                        s.getScreenHandler().replaceTemplates(payload.templates());
+                    } else if (screen instanceof SpawnItemScreen s) {
+                        s.getScreenHandler().replaceTemplates(payload.templates());
+                    }
+                })
+        );
     }
 
     private static AdminTaskViewModel toViewModel(OpsPadRefreshS2CPacket.TaskEntry entry) {
         return new AdminTaskViewModel(
-                entry.taskId(),
-                entry.title(),
-                entry.status(),
-                entry.assigneeLabel(),
-                entry.divisionLabel(),
-                entry.progressLabel(),
-                entry.detailLines()
+                entry.taskId(), entry.title(), entry.status(),
+                entry.assigneeLabel(), entry.divisionLabel(),
+                entry.progressLabel(), entry.detailLines()
         );
     }
 }
