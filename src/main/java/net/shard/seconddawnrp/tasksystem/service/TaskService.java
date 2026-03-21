@@ -222,7 +222,7 @@ public class TaskService {
         return true;
     }
 
-    public boolean createPoolTask(
+    public OpsTaskPoolEntry createPoolTask(
             String taskId,
             String displayName,
             String description,
@@ -234,28 +234,23 @@ public class TaskService {
             boolean officerConfirmationRequired,
             UUID createdBy
     ) {
-        if (taskId == null || taskId.isBlank()) return false;
-        if (displayName == null || displayName.isBlank()) return false;
-        if (description == null || description.isBlank()) return false;
-        if (division == null) return false;
-        if (objectiveType == null) return false;
-        if (targetId == null || targetId.isBlank()) return false;
-        if (requiredAmount <= 0) return false;
-        if (rewardPoints < 0) return false;
+        if (displayName == null || displayName.isBlank()) return null;
+        if (description == null || description.isBlank()) return null;
+        if (division == null) return null;
+        if (objectiveType == null) return null;
+        if (targetId == null || targetId.isBlank()) return null;
+        if (requiredAmount <= 0) return null;
+        if (rewardPoints < 0) return null;
 
-        boolean duplicate = poolEntries.stream()
-                .anyMatch(entry -> entry.getTaskId().equalsIgnoreCase(taskId));
-        if (duplicate) {
-            return false;
-        }
+        String finalTaskId = makeUniqueTaskId(taskId);
 
         OpsTaskPoolEntry entry = new OpsTaskPoolEntry(
-                taskId,
-                displayName,
-                description,
+                finalTaskId,
+                displayName.trim(),
+                description.trim(),
                 division,
                 objectiveType,
-                targetId,
+                targetId.trim(),
                 requiredAmount,
                 rewardPoints,
                 officerConfirmationRequired,
@@ -266,7 +261,7 @@ public class TaskService {
 
         poolEntries.add(entry);
         savePoolState();
-        return true;
+        return entry;
     }
 
     public boolean publishPoolTask(String taskId) {
@@ -318,30 +313,31 @@ public class TaskService {
         return true;
     }
 
+
+
     public boolean cancelPoolTask(String taskId) {
         OpsTaskPoolEntry entry = findPoolEntry(taskId).orElse(null);
         if (entry == null) {
             return false;
         }
 
+        PlayerProfile assignedProfile = getAssignedLoadedProfile(entry);
+
+        if (assignedProfile != null) {
+            Optional<ActiveTask> activeTask = findActiveTask(assignedProfile, taskId);
+            if (activeTask.isPresent()) {
+                assignedProfile.getActiveTasks().remove(activeTask.get());
+                saveTaskState(assignedProfile);
+                profileManager.markDirty(assignedProfile.getPlayerId());
+            }
+
+            notifyPlayer(assignedProfile.getPlayerId(), "Task canceled: " + entry.getDisplayName());
+        }
+
+        entry.setReviewNote("Canceled by operations.");
         entry.setStatus(OpsTaskStatus.CANCELED);
-
-        if (entry.getAssignedPlayerUuid() != null) {
-            notifyPlayer(entry.getAssignedPlayerUuid(), "Task removed: " + entry.getDisplayName());
-        }
-
         savePoolState();
-        return true;
-    }
-
-    public boolean archivePoolTask(String taskId) {
-        OpsTaskPoolEntry entry = findPoolEntry(taskId).orElse(null);
-        if (entry == null) {
-            return false;
-        }
-
-        entry.setStatus(OpsTaskStatus.ARCHIVED);
-        savePoolState();
+        syncPoolStatusFromProfiles();
         return true;
     }
 
@@ -351,9 +347,33 @@ public class TaskService {
             return false;
         }
 
+        PlayerProfile assignedProfile = getAssignedLoadedProfile(entry);
+        if (assignedProfile == null) {
+            return false;
+        }
+
+        Optional<ActiveTask> optionalTask = findActiveTask(assignedProfile, taskId);
+        if (optionalTask.isEmpty()) {
+            return false;
+        }
+
+        ActiveTask activeTask = optionalTask.get();
+        activeTask.setAwaitingOfficerApproval(false);
+        activeTask.setComplete(false);
+
         entry.setReviewNote(denialNote);
         entry.setStatus(OpsTaskStatus.IN_PROGRESS);
+
+        saveTaskState(assignedProfile);
+        profileManager.markDirty(assignedProfile.getPlayerId());
         savePoolState();
+        syncPoolStatusFromProfiles();
+
+        notifyPlayer(
+                assignedProfile.getPlayerId(),
+                "Task returned for more work: " + entry.getDisplayName()
+        );
+
         return true;
     }
 
@@ -363,9 +383,26 @@ public class TaskService {
             return false;
         }
 
+        PlayerProfile assignedProfile = getAssignedLoadedProfile(entry);
+
+        if (assignedProfile != null) {
+            Optional<ActiveTask> activeTask = findActiveTask(assignedProfile, taskId);
+            if (activeTask.isPresent()) {
+                assignedProfile.getActiveTasks().remove(activeTask.get());
+                saveTaskState(assignedProfile);
+                profileManager.markDirty(assignedProfile.getPlayerId());
+            }
+
+            notifyPlayer(
+                    assignedProfile.getPlayerId(),
+                    "Task failed: " + entry.getDisplayName()
+            );
+        }
+
         entry.setReviewNote(failureNote);
         entry.setStatus(OpsTaskStatus.FAILED);
         savePoolState();
+        syncPoolStatusFromProfiles();
         return true;
     }
 
@@ -376,6 +413,8 @@ public class TaskService {
 
         for (OpsTaskPoolEntry entry : poolEntries.stream()
                 .filter(entry -> entry.getStatus() != OpsTaskStatus.ARCHIVED)
+                .filter(entry -> entry.getStatus() != OpsTaskStatus.CANCELED)
+                .filter(entry -> entry.getStatus() != OpsTaskStatus.COMPLETED)
                 .sorted(Comparator.comparingLong(OpsTaskPoolEntry::getCreatedAtEpochMillis).reversed())
                 .toList()) {
 
@@ -605,4 +644,80 @@ public class TaskService {
             player.sendMessage(Text.literal(message), false);
         }
     }
+
+    private PlayerProfile getAssignedLoadedProfile(OpsTaskPoolEntry entry) {
+        if (entry == null || entry.getAssignedPlayerUuid() == null) {
+            return null;
+        }
+
+        return profileManager.getLoadedProfile(entry.getAssignedPlayerUuid());
+    }
+
+    public boolean editPoolTask(
+            String taskId,
+            String displayName,
+            String description,
+            Division division,
+            int requiredAmount,
+            int rewardPoints,
+            boolean officerConfirmationRequired
+    ) {
+        if (taskId == null || taskId.isBlank()) return false;
+        if (displayName == null || displayName.isBlank()) return false;
+        if (description == null || description.isBlank()) return false;
+        if (division == null) return false;
+        if (requiredAmount <= 0) return false;
+        if (rewardPoints < 0) return false;
+
+        OpsTaskPoolEntry entry = findPoolEntry(taskId).orElse(null);
+        if (entry == null) {
+            return false;
+        }
+
+        entry.setDisplayName(displayName.trim());
+        entry.setDescription(description.trim());
+        entry.setDivision(division);
+        entry.setRequiredAmount(requiredAmount);
+        entry.setRewardPoints(rewardPoints);
+        entry.setOfficerConfirmationRequired(officerConfirmationRequired);
+
+        savePoolState();
+        syncPoolStatusFromProfiles();
+        return true;
+    }
+
+    private String sanitizeTaskId(String raw) {
+        if (raw == null) {
+            return "";
+        }
+
+        return raw.trim()
+                .toLowerCase()
+                .replace(' ', '_')
+                .replaceAll("[^a-z0-9_-]", "");
+    }
+
+    private String makeUniqueTaskId(String baseTaskId) {
+        String sanitized = sanitizeTaskId(baseTaskId);
+        if (sanitized.isBlank()) {
+            sanitized = "task";
+        }
+
+        String candidate = sanitized;
+        int counter = 2;
+
+        while (findPoolEntryIgnoreCase(candidate).isPresent() || TaskRegistry.get(candidate) != null) {
+            candidate = sanitized + "_" + counter;
+            counter++;
+        }
+
+        return candidate;
+    }
+
+    private Optional<OpsTaskPoolEntry> findPoolEntryIgnoreCase(String taskId) {
+        return poolEntries.stream()
+                .filter(entry -> entry.getTaskId().equalsIgnoreCase(taskId))
+                .findFirst();
+    }
+
 }

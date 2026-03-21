@@ -36,6 +36,7 @@ import net.shard.seconddawnrp.tasksystem.repository.JsonOpsTaskPoolRepository;
 import net.shard.seconddawnrp.tasksystem.repository.JsonTaskStateRepository;
 import net.shard.seconddawnrp.tasksystem.repository.OpsTaskPoolRepository;
 import net.shard.seconddawnrp.tasksystem.repository.TaskStateRepository;
+import net.shard.seconddawnrp.tasksystem.service.TaskPermissionService;
 import net.shard.seconddawnrp.tasksystem.service.TaskRewardService;
 import net.shard.seconddawnrp.tasksystem.service.TaskService;
 import net.shard.seconddawnrp.tasksystem.network.ModNetworking;
@@ -53,6 +54,7 @@ public class SecondDawnRP implements ModInitializer {
     public static PermissionService PERMISSION_SERVICE;
     public static TaskRewardService TASK_REWARD_SERVICE;
     public static TaskService TASK_SERVICE;
+    public static TaskPermissionService TASK_PERMISSION_SERVICE;
 
     @Override
     public void onInitialize() {
@@ -70,6 +72,7 @@ public class SecondDawnRP implements ModInitializer {
         // Database bootstrap
         DatabaseConfig databaseConfig = new DatabaseConfig(configDir);
         DATABASE_MANAGER = new DatabaseManager(databaseConfig);
+
 
         try {
             DATABASE_MANAGER.init();
@@ -106,7 +109,7 @@ public class SecondDawnRP implements ModInitializer {
 
         PROFILE_SERVICE = new PlayerProfileService(PROFILE_MANAGER, new NoOpProfileSyncService());
         PERMISSION_SERVICE = new PermissionService(null);
-
+        TASK_PERMISSION_SERVICE = new TaskPermissionService(PERMISSION_SERVICE);
         TaskRegistry.bootstrap();
         TASK_REWARD_SERVICE = new TaskRewardService();
         TASK_SERVICE = new TaskService(
@@ -138,7 +141,7 @@ public class SecondDawnRP implements ModInitializer {
 
                 PROFILE_SERVICE = new PlayerProfileService(PROFILE_MANAGER, syncService);
                 PERMISSION_SERVICE = new PermissionService(luckPerms);
-
+                TASK_PERMISSION_SERVICE = new TaskPermissionService(PERMISSION_SERVICE);
                 System.out.println("[SecondDawnRP] LuckPerms integration initialized.");
             } catch (Exception e) {
                 System.out.println("[SecondDawnRP] LuckPerms not ready in this environment. Continuing without LP sync.");

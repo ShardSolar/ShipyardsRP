@@ -15,6 +15,21 @@ public final class TaskTargetMatcher {
         }
 
         Identifier blockId = Registries.BLOCK.getId(block);
-        return blockId != null && targetId.equals(blockId.toString());
+        if (blockId == null) {
+            return false;
+        }
+
+        String normalizedTarget = normalizeBlockTarget(targetId);
+        return normalizedTarget.equals(blockId.toString());
+    }
+
+    private static String normalizeBlockTarget(String raw) {
+        String value = raw.trim().toLowerCase();
+
+        if (!value.contains(":")) {
+            value = "minecraft:" + value;
+        }
+
+        return value;
     }
 }

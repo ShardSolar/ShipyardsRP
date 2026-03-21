@@ -7,7 +7,10 @@ import net.minecraft.text.Text;
 import net.shard.seconddawnrp.SecondDawnRP;
 import net.shard.seconddawnrp.divison.Division;
 import net.shard.seconddawnrp.playerdata.PlayerProfile;
-import net.shard.seconddawnrp.tasksystem.pad.AdminTaskScreenHandler;
+import net.shard.seconddawnrp.tasksystem.pad.AdminTaskViewModel;
+import net.shard.seconddawnrp.tasksystem.network.EditTaskC2SPacket;
+
+import java.util.List;
 
 public class ModNetworking {
 
@@ -60,10 +63,32 @@ public class ModNetworking {
                 (payload, context) -> context.player().server.execute(() ->
                         handleSubmitManualConfirm(context.player(), payload))
         );
+
+        PayloadTypeRegistry.playC2S().register(
+                EditTaskC2SPacket.ID,
+                EditTaskC2SPacket.CODEC
+        );
+
+        ServerPlayNetworking.registerGlobalReceiver(
+                EditTaskC2SPacket.ID,
+                (payload, context) -> context.player().server.execute(() ->
+                        handleEditTask(context.player(), payload))
+        );
     }
 
     private static void handleCreateTask(ServerPlayerEntity player, CreateTaskC2SPacket packet) {
-        boolean created = SecondDawnRP.TASK_SERVICE.createPoolTask(
+        PlayerProfile actorProfile = getActorProfile(player);
+        if (actorProfile == null) {
+            player.sendMessage(Text.literal("Your profile is not loaded."), false);
+            return;
+        }
+
+        if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canCreateTasks(player, actorProfile)) {
+            player.sendMessage(Text.literal("You do not have permission to create tasks."), false);
+            return;
+        }
+
+        var createdEntry = SecondDawnRP.TASK_SERVICE.createPoolTask(
                 packet.taskId(),
                 packet.displayName(),
                 packet.description(),
@@ -76,27 +101,41 @@ public class ModNetworking {
                 player.getUuid()
         );
 
-        if (created) {
-            player.sendMessage(Text.literal("Task created: " + packet.displayName()), false);
-            ServerPlayNetworking.send(player, new OpsPadRefreshS2CPacket());
+        if (createdEntry != null) {
+            player.sendMessage(
+                    Text.literal("Task created: " + createdEntry.getDisplayName() + " [" + createdEntry.getTaskId() + "]"),
+                    false
+            );
+            sendOpsPadRefresh(player);
         } else {
-            player.sendMessage(Text.literal("Task creation failed. Check all fields or duplicate task id."), false);
+            player.sendMessage(Text.literal("Task creation failed. Check all fields."), false);
         }
     }
 
     private static void handleAssignTask(ServerPlayerEntity player, AssignTaskC2SPacket packet) {
-        AdminTaskScreenHandler.AssignMode mode;
-        try {
-            mode = AdminTaskScreenHandler.AssignMode.valueOf(packet.assignModeName());
-        } catch (IllegalArgumentException e) {
-            player.sendMessage(Text.literal("Assignment failed. Invalid mode."), false);
+        PlayerProfile actorProfile = getActorProfile(player);
+        if (actorProfile == null) {
+            player.sendMessage(Text.literal("Your profile is not loaded."), false);
             return;
         }
 
-        boolean success = switch (mode) {
-            case PUBLIC -> SecondDawnRP.TASK_SERVICE.publishPoolTask(packet.taskId());
+        String mode = packet.assignModeName();
 
-            case DIVISION -> {
+        boolean success = switch (mode) {
+            case "PUBLIC" -> {
+                if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canPublishTasks(player, actorProfile)) {
+                    player.sendMessage(Text.literal("You do not have permission to publish tasks."), false);
+                    yield false;
+                }
+                yield SecondDawnRP.TASK_SERVICE.publishPoolTask(packet.taskId());
+            }
+
+            case "DIVISION" -> {
+                if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canAssignTasks(player, actorProfile)) {
+                    player.sendMessage(Text.literal("You do not have permission to assign tasks."), false);
+                    yield false;
+                }
+
                 try {
                     Division division = Division.valueOf(packet.divisionName());
                     yield SecondDawnRP.TASK_SERVICE.assignPoolTaskToDivisionPool(packet.taskId(), division);
@@ -106,7 +145,12 @@ public class ModNetworking {
                 }
             }
 
-            case PLAYER -> {
+            case "PLAYER" -> {
+                if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canAssignTasks(player, actorProfile)) {
+                    player.sendMessage(Text.literal("You do not have permission to assign tasks."), false);
+                    yield false;
+                }
+
                 String name = packet.playerName().trim();
                 if (name.isBlank()) {
                     player.sendMessage(Text.literal("Enter a player name."), false);
@@ -134,17 +178,28 @@ public class ModNetworking {
                         player.getUuid()
                 );
             }
+
+            default -> {
+                player.sendMessage(Text.literal("Assignment failed. Invalid mode."), false);
+                yield false;
+            }
         };
 
         if (success) {
             player.sendMessage(Text.literal("Task assignment updated."), false);
-            ServerPlayNetworking.send(player, new OpsPadRefreshS2CPacket());
+            sendOpsPadRefresh(player);
         } else {
             player.sendMessage(Text.literal("Assignment failed."), false);
         }
     }
 
     private static void handleReviewAction(ServerPlayerEntity player, ReviewTaskActionC2SPacket packet) {
+        PlayerProfile actorProfile = getActorProfile(player);
+        if (actorProfile == null) {
+            player.sendMessage(Text.literal("Your profile is not loaded."), false);
+            return;
+        }
+
         String taskId = packet.taskId();
         String action = packet.actionName();
 
@@ -152,6 +207,11 @@ public class ModNetworking {
 
         switch (action) {
             case "APPROVE" -> {
+                if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canApproveTasks(player, actorProfile)) {
+                    player.sendMessage(Text.literal("You do not have permission to approve tasks."), false);
+                    return;
+                }
+
                 PlayerProfile targetProfile = findAssignedProfile(taskId);
                 if (targetProfile == null) {
                     player.sendMessage(Text.literal("No assigned player profile found for this task."), false);
@@ -160,11 +220,35 @@ public class ModNetworking {
                 success = SecondDawnRP.TASK_SERVICE.approveTask(targetProfile, taskId);
             }
 
-            case "RETURN" -> success = SecondDawnRP.TASK_SERVICE.returnTaskToInProgress(taskId, "Returned by operations review.");
+            case "RETURN" -> {
+                if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canReturnTasks(player, actorProfile)) {
+                    player.sendMessage(Text.literal("You do not have permission to return tasks."), false);
+                    return;
+                }
+                success = SecondDawnRP.TASK_SERVICE.returnTaskToInProgress(
+                        taskId,
+                        "Returned by operations review."
+                );
+            }
 
-            case "FAIL" -> success = SecondDawnRP.TASK_SERVICE.failTask(taskId, "Marked failed by operations review.");
+            case "FAIL" -> {
+                if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canFailTasks(player, actorProfile)) {
+                    player.sendMessage(Text.literal("You do not have permission to fail tasks."), false);
+                    return;
+                }
+                success = SecondDawnRP.TASK_SERVICE.failTask(
+                        taskId,
+                        "Marked failed by operations review."
+                );
+            }
 
-            case "CANCEL" -> success = SecondDawnRP.TASK_SERVICE.cancelPoolTask(taskId);
+            case "CANCEL" -> {
+                if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canCancelTasks(player, actorProfile)) {
+                    player.sendMessage(Text.literal("You do not have permission to cancel tasks."), false);
+                    return;
+                }
+                success = SecondDawnRP.TASK_SERVICE.cancelPoolTask(taskId);
+            }
 
             default -> {
                 player.sendMessage(Text.literal("Invalid review action."), false);
@@ -174,10 +258,11 @@ public class ModNetworking {
 
         if (success) {
             player.sendMessage(Text.literal("Task updated: " + action), false);
-            ServerPlayNetworking.send(player, new OpsPadRefreshS2CPacket());
+            sendOpsPadRefresh(player);
         } else {
             player.sendMessage(Text.literal("Task action failed."), false);
         }
+
     }
 
     private static void handleSubmitManualConfirm(ServerPlayerEntity player, SubmitManualConfirmC2SPacket packet) {
@@ -196,6 +281,31 @@ public class ModNetworking {
         }
     }
 
+    private static void sendOpsPadRefresh(ServerPlayerEntity player) {
+        ServerPlayNetworking.send(player, buildOpsPadRefreshPacket());
+    }
+
+    private static OpsPadRefreshS2CPacket buildOpsPadRefreshPacket() {
+        List<OpsPadRefreshS2CPacket.TaskEntry> entries = SecondDawnRP.TASK_SERVICE.buildAdminTaskViews()
+                .stream()
+                .map(ModNetworking::toTaskEntry)
+                .toList();
+
+        return new OpsPadRefreshS2CPacket(entries);
+    }
+
+    private static OpsPadRefreshS2CPacket.TaskEntry toTaskEntry(AdminTaskViewModel view) {
+        return new OpsPadRefreshS2CPacket.TaskEntry(
+                view.getTaskId(),
+                view.getTitle(),
+                view.getStatus(),
+                view.getAssigneeLabel(),
+                view.getDivisionLabel(),
+                view.getProgressLabel(),
+                view.getDetailLines()
+        );
+    }
+
     private static PlayerProfile findAssignedProfile(String taskId) {
         for (var entry : SecondDawnRP.TASK_SERVICE.getPoolEntries()) {
             if (!entry.getTaskId().equals(taskId)) {
@@ -211,4 +321,47 @@ public class ModNetworking {
 
         return null;
     }
+
+    private static PlayerProfile getActorProfile(ServerPlayerEntity player) {
+        return SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(player.getUuid());
+    }
+
+    private static void handleEditTask(ServerPlayerEntity player, EditTaskC2SPacket packet) {
+        PlayerProfile actorProfile = getActorProfile(player);
+        if (actorProfile == null) {
+            player.sendMessage(Text.literal("Your profile is not loaded."), false);
+            return;
+        }
+
+        if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canEditTasks(player, actorProfile)) {
+            player.sendMessage(Text.literal("You do not have permission to edit tasks."), false);
+            return;
+        }
+
+        Division division;
+        try {
+            division = packet.getDivision();
+        } catch (IllegalArgumentException e) {
+            player.sendMessage(Text.literal("Edit failed. Invalid division."), false);
+            return;
+        }
+
+        boolean success = SecondDawnRP.TASK_SERVICE.editPoolTask(
+                packet.taskId(),
+                packet.displayName(),
+                packet.description(),
+                division,
+                packet.requiredAmount(),
+                packet.rewardPoints(),
+                packet.officerConfirmationRequired()
+        );
+
+        if (success) {
+            player.sendMessage(Text.literal("Task updated: " + packet.displayName()), false);
+            sendOpsPadRefresh(player);
+        } else {
+            player.sendMessage(Text.literal("Task edit failed."), false);
+        }
+    }
+
 }

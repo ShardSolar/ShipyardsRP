@@ -83,4 +83,30 @@ public class OpsTaskPoolEntry {
 
     public String getReviewNote() { return reviewNote; }
     public void setReviewNote(String reviewNote) { this.reviewNote = reviewNote; }
+    public void setDisplayName(String displayName) {
+        this.displayName = Objects.requireNonNull(displayName, "displayName");
+    }
+
+    public void setDescription(String description) {
+        this.description = Objects.requireNonNull(description, "description");
+    }
+
+    public void setDivision(Division division) {
+        this.division = Objects.requireNonNull(division, "division");
+    }
+
+    public void setRequiredAmount(int requiredAmount) {
+        this.requiredAmount = Math.max(1, requiredAmount);
+    }
+
+    public void setRewardPoints(int rewardPoints) {
+        this.rewardPoints = Math.max(0, rewardPoints);
+    }
+
+    public void setOfficerConfirmationRequired(boolean officerConfirmationRequired) {
+        this.officerConfirmationRequired = officerConfirmationRequired;
+    }
+
+
 }
+

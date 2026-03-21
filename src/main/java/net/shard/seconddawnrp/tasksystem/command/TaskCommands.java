@@ -7,6 +7,7 @@ import net.minecraft.command.argument.EntityArgumentType;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
+import net.shard.seconddawnrp.SecondDawnRP;
 import net.shard.seconddawnrp.playerdata.PlayerProfile;
 import net.shard.seconddawnrp.playerdata.PlayerProfileManager;
 import net.shard.seconddawnrp.tasksystem.data.ActiveTask;
@@ -34,10 +35,22 @@ public final class TaskCommands {
         dispatcher.register(literal("task")
 
                 .then(literal("assign")
-                        .requires(source -> source.hasPermissionLevel(2))
                         .then(argument("player", EntityArgumentType.player())
                                 .then(argument("taskId", StringArgumentType.word())
                                         .executes(context -> {
+                                            ServerPlayerEntity sourcePlayer = getOptionalPlayer(context.getSource());
+                                            PlayerProfile actorProfile = getLoadedActorProfile(sourcePlayer);
+
+                                            if (sourcePlayer == null || actorProfile == null) {
+                                                context.getSource().sendError(Text.literal("Only loaded player profiles may assign tasks."));
+                                                return 0;
+                                            }
+
+                                            if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canAssignTasks(sourcePlayer, actorProfile)) {
+                                                context.getSource().sendError(Text.literal("You do not have permission to assign tasks."));
+                                                return 0;
+                                            }
+
                                             ServerPlayerEntity targetPlayer = EntityArgumentType.getPlayer(context, "player");
                                             String taskId = StringArgumentType.getString(context, "taskId");
 
@@ -52,12 +65,10 @@ public final class TaskCommands {
                                                 return 0;
                                             }
 
-                                            ServerPlayerEntity sourcePlayer = getOptionalPlayer(context.getSource());
-
                                             boolean assigned = taskService.assignTask(
                                                     profile,
                                                     taskId,
-                                                    sourcePlayer != null ? sourcePlayer.getUuid() : null,
+                                                    sourcePlayer.getUuid(),
                                                     TaskAssignmentSource.ADMIN
                                             );
 
@@ -87,8 +98,9 @@ public final class TaskCommands {
                                 .executes(context -> {
                                     ServerPlayerEntity targetPlayer = EntityArgumentType.getPlayer(context, "player");
                                     ServerPlayerEntity sourcePlayer = getOptionalPlayer(context.getSource());
+                                    PlayerProfile actorProfile = getLoadedActorProfile(sourcePlayer);
 
-                                    if (!canViewOther(sourcePlayer, targetPlayer, context.getSource())) {
+                                    if (!canViewOther(sourcePlayer, actorProfile, targetPlayer)) {
                                         context.getSource().sendError(Text.literal("You do not have permission to view another player's tasks."));
                                         return 0;
                                     }
@@ -111,8 +123,9 @@ public final class TaskCommands {
                                 .executes(context -> {
                                     ServerPlayerEntity targetPlayer = EntityArgumentType.getPlayer(context, "player");
                                     ServerPlayerEntity sourcePlayer = getOptionalPlayer(context.getSource());
+                                    PlayerProfile actorProfile = getLoadedActorProfile(sourcePlayer);
 
-                                    if (!canViewOther(sourcePlayer, targetPlayer, context.getSource())) {
+                                    if (!canViewOther(sourcePlayer, actorProfile, targetPlayer)) {
                                         context.getSource().sendError(Text.literal("You do not have permission to view another player's task progress."));
                                         return 0;
                                     }
@@ -122,10 +135,22 @@ public final class TaskCommands {
 
 
                 .then(literal("approve")
-                        .requires(source -> source.hasPermissionLevel(2))
                         .then(argument("player", EntityArgumentType.player())
                                 .then(argument("taskId", StringArgumentType.word())
                                         .executes(context -> {
+                                            ServerPlayerEntity sourcePlayer = getOptionalPlayer(context.getSource());
+                                            PlayerProfile actorProfile = getLoadedActorProfile(sourcePlayer);
+
+                                            if (sourcePlayer == null || actorProfile == null) {
+                                                context.getSource().sendError(Text.literal("Only loaded player profiles may approve tasks."));
+                                                return 0;
+                                            }
+
+                                            if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canApproveTasks(sourcePlayer, actorProfile)) {
+                                                context.getSource().sendError(Text.literal("You do not have permission to approve tasks."));
+                                                return 0;
+                                            }
+
                                             ServerPlayerEntity targetPlayer = EntityArgumentType.getPlayer(context, "player");
                                             String taskId = StringArgumentType.getString(context, "taskId");
 
@@ -165,8 +190,9 @@ public final class TaskCommands {
                                 .executes(context -> {
                                     ServerPlayerEntity targetPlayer = EntityArgumentType.getPlayer(context, "player");
                                     ServerPlayerEntity sourcePlayer = getOptionalPlayer(context.getSource());
+                                    PlayerProfile actorProfile = getLoadedActorProfile(sourcePlayer);
 
-                                    if (!canViewOther(sourcePlayer, targetPlayer, context.getSource())) {
+                                    if (!canViewOther(sourcePlayer, actorProfile, targetPlayer)) {
                                         context.getSource().sendError(Text.literal("You do not have permission to view another player's completed tasks."));
                                         return 0;
                                     }
@@ -188,8 +214,9 @@ public final class TaskCommands {
                                 .executes(context -> {
                                     ServerPlayerEntity targetPlayer = EntityArgumentType.getPlayer(context, "player");
                                     ServerPlayerEntity sourcePlayer = getOptionalPlayer(context.getSource());
+                                    PlayerProfile actorProfile = getLoadedActorProfile(sourcePlayer);
 
-                                    if (!canViewOther(sourcePlayer, targetPlayer, context.getSource())) {
+                                    if (!canViewOther(sourcePlayer, actorProfile, targetPlayer)) {
                                         context.getSource().sendError(Text.literal("You do not have permission to view another player's task history."));
                                         return 0;
                                     }
@@ -198,13 +225,24 @@ public final class TaskCommands {
                                 })))
 
                 .then(literal("debug")
-                        .requires(source -> source.hasPermissionLevel(2))
-
                         .then(literal("advance")
                                 .then(argument("player", EntityArgumentType.player())
                                         .then(argument("taskId", StringArgumentType.word())
                                                 .then(argument("amount", IntegerArgumentType.integer(1))
                                                         .executes(context -> {
+                                                            ServerPlayerEntity sourcePlayer = getOptionalPlayer(context.getSource());
+                                                            PlayerProfile actorProfile = getLoadedActorProfile(sourcePlayer);
+
+                                                            if (sourcePlayer == null || actorProfile == null) {
+                                                                context.getSource().sendError(Text.literal("Only loaded player profiles may use debug advance."));
+                                                                return 0;
+                                                            }
+
+                                                            if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canAssignTasks(sourcePlayer, actorProfile)) {
+                                                                context.getSource().sendError(Text.literal("You do not have permission to advance task progress."));
+                                                                return 0;
+                                                            }
+
                                                             ServerPlayerEntity targetPlayer = EntityArgumentType.getPlayer(context, "player");
                                                             String taskId = StringArgumentType.getString(context, "taskId");
                                                             int amount = IntegerArgumentType.getInteger(context, "amount");
@@ -256,6 +294,13 @@ public final class TaskCommands {
                                                         }))))))
 
         );
+    }
+
+    private static PlayerProfile getLoadedActorProfile(ServerPlayerEntity player) {
+        if (player == null) {
+            return null;
+        }
+        return SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(player.getUuid());
     }
 
     private static int sendTaskList(ServerCommandSource source, PlayerProfileManager profileManager, TaskService taskService, ServerPlayerEntity targetPlayer) {
@@ -331,16 +376,22 @@ public final class TaskCommands {
         return 1;
     }
 
-    private static boolean canViewOther(ServerPlayerEntity sourcePlayer, ServerPlayerEntity targetPlayer, ServerCommandSource source) {
-        if (source.hasPermissionLevel(2)) {
-            return true;
-        }
-
+    private static boolean canViewOther(ServerPlayerEntity sourcePlayer, PlayerProfile actorProfile, ServerPlayerEntity targetPlayer) {
         if (sourcePlayer == null) {
             return false;
         }
 
-        return sourcePlayer.getUuid().equals(targetPlayer.getUuid());
+        if (sourcePlayer.getUuid().equals(targetPlayer.getUuid())) {
+            return true;
+        }
+
+        if (actorProfile == null) {
+            return false;
+        }
+
+        return SecondDawnRP.TASK_PERMISSION_SERVICE.canAssignTasks(sourcePlayer, actorProfile)
+                || SecondDawnRP.TASK_PERMISSION_SERVICE.canApproveTasks(sourcePlayer, actorProfile)
+                || SecondDawnRP.TASK_PERMISSION_SERVICE.canViewOpsPad(sourcePlayer, actorProfile);
     }
 
     private static ServerPlayerEntity getOptionalPlayer(ServerCommandSource source) {

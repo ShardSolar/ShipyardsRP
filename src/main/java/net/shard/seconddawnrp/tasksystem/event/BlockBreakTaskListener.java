@@ -11,7 +11,6 @@ import net.shard.seconddawnrp.playerdata.PlayerProfileManager;
 import net.shard.seconddawnrp.tasksystem.data.ActiveTask;
 import net.shard.seconddawnrp.tasksystem.data.TaskObjectiveType;
 import net.shard.seconddawnrp.tasksystem.data.TaskTemplate;
-import net.shard.seconddawnrp.tasksystem.registry.TaskRegistry;
 import net.shard.seconddawnrp.tasksystem.service.TaskService;
 import net.shard.seconddawnrp.tasksystem.util.TaskTargetMatcher;
 
@@ -43,7 +42,7 @@ public class BlockBreakTaskListener {
         }
 
         for (ActiveTask activeTask : List.copyOf(activeTasks)) {
-            TaskTemplate template = TaskRegistry.get(activeTask.getTemplateId());
+            TaskTemplate template = taskService.resolveTaskTemplate(activeTask.getTemplateId());
             if (template == null) {
                 continue;
             }
