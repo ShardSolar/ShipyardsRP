@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cube_column",
+  "textures": {
+    "end": "seconddawnrp:block/conduit",
+    "side": "seconddawnrp:block/conduit"
+  }
+}

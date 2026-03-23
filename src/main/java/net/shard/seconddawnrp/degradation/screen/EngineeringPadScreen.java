@@ -39,19 +39,32 @@ public class EngineeringPadScreen extends Screen {
 
     // ── Layout ────────────────────────────────────────────────────────────────
     private static final int W = 260;
-    private static final int H = 210;
+    private static final int H = 240;
 
     private static final int PAD       = 6;
     private static final int ROW_H     = 14;
     private static final int ROWS_VIS  = 6;
 
     private final List<ComponentSnapshot> components;
+    private final String warpCoreState;
+    private final int warpCoreFuel;
+    private final int warpCoreMaxFuel;
+    private final int warpCorePower;
     private int scrollOffset = 0;
     private int ox, oy; // panel origin
 
-    public EngineeringPadScreen(List<ComponentSnapshot> components) {
+    public EngineeringPadScreen(
+            List<ComponentSnapshot> components,
+            String warpCoreState,
+            int warpCoreFuel,
+            int warpCoreMaxFuel,
+            int warpCorePower) {
         super(Text.literal("Engineering Systems"));
         this.components = components;
+        this.warpCoreState = warpCoreState;
+        this.warpCoreFuel = warpCoreFuel;
+        this.warpCoreMaxFuel = warpCoreMaxFuel;
+        this.warpCorePower = warpCorePower;
     }
 
     @Override public boolean shouldPause() { return false; }

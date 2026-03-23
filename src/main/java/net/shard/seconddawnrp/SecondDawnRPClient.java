@@ -16,6 +16,7 @@ import net.shard.seconddawnrp.tasksystem.pad.AdminTaskViewModel;
 import net.shard.seconddawnrp.tasksystem.pad.OperationsPadScreen;
 import net.shard.seconddawnrp.tasksystem.pad.TaskPadScreen;
 import net.shard.seconddawnrp.tasksystem.terminal.TerminalScreen;
+import net.shard.seconddawnrp.warpcore.client.WarpCoreClientHandler;
 
 import java.util.List;
 
@@ -30,6 +31,7 @@ public class SecondDawnRPClient implements ClientModInitializer {
         HandledScreens.register(ModScreenHandlers.SPAWN_CONFIG_SCREEN, SpawnConfigScreen::new);
         HandledScreens.register(ModScreenHandlers.SPAWN_ITEM_SCREEN, SpawnItemScreen::new);
         ComponentWarningClientHandler.register();
+        WarpCoreClientHandler.register();
         // GM keybindings
         GmKeybindings.register();
         GmKeyInputHandler.register();

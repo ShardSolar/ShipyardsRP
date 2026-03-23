@@ -14,29 +14,24 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-/*
- * Sent server → client when the player right-clicks with the Engineering PAD
+/**
+ * Sent server -> client when the player right-clicks with the Engineering PAD
  * in air. Carries a snapshot of all registered components so the client
- * screen can render them without round-tripping.
- *
- * <p>Each component is encoded as a lightweight {@link ComponentSnapshot}
- * record containing only what the screen needs — no UUIDs or timestamps.
+ * screen can render them without a round-trip.
  */
 public record OpenEngineeringPadS2CPacket(
-        List<ComponentSnapshot> components
+        List<ComponentSnapshot> components,
+        String warpCoreState,
+        int warpCoreFuel,
+        int warpCoreMaxFuel,
+        int warpCorePower
 ) implements CustomPayload {
 
     public static final Id<OpenEngineeringPadS2CPacket> ID =
             new Id<>(Identifier.of(SecondDawnRP.MOD_ID, "open_engineering_pad"));
 
-    /*
+    /**
      * Lightweight view of a component for screen rendering.
-     *
-     * @param componentId unique component ID
-     * @param displayName human-readable name
-     * @param worldKey    registry key of the world (e.g. {@code minecraft:overworld})
-     * @param health      current health 0–100
-     * @param status      current {@link ComponentStatus}
      */
     public record ComponentSnapshot(
             String componentId,
@@ -46,24 +41,52 @@ public record OpenEngineeringPadS2CPacket(
             ComponentStatus status
     ) {}
 
-    // ── Codec ─────────────────────────────────────────────────────────────────
+    // ── Codecs ────────────────────────────────────────────────────────────────
 
     private static final PacketCodec<RegistryByteBuf, ComponentSnapshot> SNAPSHOT_CODEC =
-            PacketCodec.tuple(
-                    PacketCodecs.STRING, ComponentSnapshot::componentId,
-                    PacketCodecs.STRING, ComponentSnapshot::displayName,
-                    PacketCodecs.STRING, ComponentSnapshot::worldKey,
-                    PacketCodecs.INTEGER, ComponentSnapshot::health,
-                    PacketCodecs.STRING.xmap(ComponentStatus::valueOf, ComponentStatus::name),
-                    ComponentSnapshot::status,
-                    ComponentSnapshot::new
+            PacketCodec.of(
+                    (value, buf) -> {
+                        buf.writeString(value.componentId());
+                        buf.writeString(value.displayName());
+                        buf.writeString(value.worldKey());
+                        buf.writeInt(value.health());
+                        buf.writeString(value.status().name());
+                    },
+                    buf -> new ComponentSnapshot(
+                            buf.readString(),
+                            buf.readString(),
+                            buf.readString(),
+                            buf.readInt(),
+                            ComponentStatus.valueOf(buf.readString())
+                    )
             );
 
     public static final PacketCodec<RegistryByteBuf, OpenEngineeringPadS2CPacket> CODEC =
-            PacketCodec.tuple(
-                    SNAPSHOT_CODEC.collect(PacketCodecs.toList()),
-                    OpenEngineeringPadS2CPacket::components,
-                    OpenEngineeringPadS2CPacket::new
+            PacketCodec.of(
+                    (value, buf) -> {
+                        buf.writeInt(value.components().size());
+                        for (ComponentSnapshot snap : value.components()) {
+                            SNAPSHOT_CODEC.encode(buf, snap);
+                        }
+                        buf.writeString(value.warpCoreState());
+                        buf.writeInt(value.warpCoreFuel());
+                        buf.writeInt(value.warpCoreMaxFuel());
+                        buf.writeInt(value.warpCorePower());
+                    },
+                    buf -> {
+                        int size = buf.readInt();
+                        List<ComponentSnapshot> list = new ArrayList<>(size);
+                        for (int i = 0; i < size; i++) {
+                            list.add(SNAPSHOT_CODEC.decode(buf));
+                        }
+                        return new OpenEngineeringPadS2CPacket(
+                                list,
+                                buf.readString(),
+                                buf.readInt(),
+                                buf.readInt(),
+                                buf.readInt()
+                        );
+                    }
             );
 
     @Override
@@ -73,9 +96,8 @@ public record OpenEngineeringPadS2CPacket(
 
     // ── Factory ───────────────────────────────────────────────────────────────
 
-    /*
-     * Build a packet from the live service, sorted worst-first so the most
-     * critical components appear at the top of the screen.
+    /**
+     * Build a packet from the live service, sorted worst-first.
      */
     public static OpenEngineeringPadS2CPacket fromService(DegradationService service) {
         List<ComponentSnapshot> snapshots = new ArrayList<>();
@@ -88,19 +110,29 @@ public record OpenEngineeringPadS2CPacket(
                     entry.getStatus()
             ));
         }
-        // Sort: OFFLINE first, then CRITICAL, DEGRADED, NOMINAL; within status by health asc
         snapshots.sort(Comparator
                 .<ComponentSnapshot>comparingInt(s -> statusSortKey(s.status()))
                 .thenComparingInt(ComponentSnapshot::health));
-        return new OpenEngineeringPadS2CPacket(snapshots);
+        // Warp core snapshot
+        String wcState = "OFFLINE";
+        int wcFuel = 0, wcMaxFuel = 64, wcPower = 0;
+        if (net.shard.seconddawnrp.SecondDawnRP.WARP_CORE_SERVICE != null
+                && net.shard.seconddawnrp.SecondDawnRP.WARP_CORE_SERVICE.isRegistered()) {
+            var wc = net.shard.seconddawnrp.SecondDawnRP.WARP_CORE_SERVICE.getEntry().get();
+            wcState   = wc.getState().name();
+            wcFuel    = wc.getFuelRods();
+            wcMaxFuel = net.shard.seconddawnrp.SecondDawnRP.WARP_CORE_SERVICE.getConfig().getMaxFuelRods();
+            wcPower   = wc.getCurrentPowerOutput();
+        }
+        return new OpenEngineeringPadS2CPacket(snapshots, wcState, wcFuel, wcMaxFuel, wcPower);
     }
 
     private static int statusSortKey(ComponentStatus status) {
         return switch (status) {
-            case OFFLINE -> 0;
+            case OFFLINE  -> 0;
             case CRITICAL -> 1;
             case DEGRADED -> 2;
-            case NOMINAL -> 3;
+            case NOMINAL  -> 3;
         };
     }
 }

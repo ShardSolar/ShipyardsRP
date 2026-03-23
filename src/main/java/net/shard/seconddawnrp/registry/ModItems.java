@@ -12,6 +12,7 @@ import net.shard.seconddawnrp.gmevent.item.SpawnItemTool;
 import net.shard.seconddawnrp.tasksystem.pad.OperationsPadItem;
 import net.shard.seconddawnrp.tasksystem.pad.TaskPadItem;
 import net.shard.seconddawnrp.tasksystem.terminal.TaskTerminalToolItem;
+import net.shard.seconddawnrp.warpcore.item.WarpCoreTool;
 
 public class ModItems {
 
@@ -46,6 +47,29 @@ public class ModItems {
             Identifier.of(SecondDawnRP.MOD_ID, "component_registration_tool"),
             new ComponentRegistrationTool(new Item.Settings().maxCount(1)));
 
+    public static final Item WARP_CORE_TOOL = Registry.register(
+            Registries.ITEM,
+            Identifier.of(SecondDawnRP.MOD_ID, "warp_core_tool"),
+            new WarpCoreTool(new Item.Settings().maxCount(1))
+    );
+
+    public static final Item FUEL_ROD = Registry.register(
+            Registries.ITEM,
+            Identifier.of(SecondDawnRP.MOD_ID, "fuel_rod"),
+            new Item(new Item.Settings().maxCount(64))
+    );
+
+    public static final Item CONTAINMENT_CELL = Registry.register(
+            Registries.ITEM,
+            Identifier.of(SecondDawnRP.MOD_ID, "containment_cell"),
+            new Item(new Item.Settings().maxCount(16))
+    );
+
+    public static final Item RESONANCE_COIL = Registry.register(
+            Registries.ITEM,
+            Identifier.of(SecondDawnRP.MOD_ID, "resonance_coil"),
+            new Item(new Item.Settings().maxCount(4))
+    );
 
     private static Item register(String id, Item item) {
         return Registry.register(Registries.ITEM, SecondDawnRP.id(id), item);

@@ -5,5 +5,17 @@
   "item.seconddawnrp.engineering_pad": "Engineering Systems Pad",
   "item.seconddawnrp.task_pad": "Task Pad",
   "item.seconddawnrp.operations_pad": "Operations Task Pad",
-  "item.seconddawnrp.component_registration_tool": "Component Registration Tool"
+  "item.seconddawnrp.component_registration_tool": "Component Registration Tool",
+
+  "item.seconddawnrp.warp_core_tool":   "Warp Core Tool",
+  "item.seconddawnrp.fuel_rod":         "Fuel Rod",
+  "item.seconddawnrp.containment_cell": "Containment Cell",
+  "item.seconddawnrp.resonance_coil":   "Resonance Coil",
+  "block.seconddawnrp.warp_core_casing":     "Warp Core Casing",
+  "block.seconddawnrp.warp_core_injector":   "Warp Core Injector",
+  "block.seconddawnrp.warp_core_column":     "Warp Core Column",
+  "block.seconddawnrp.warp_core_controller": "Warp Core Controller",
+  "block.seconddawnrp.conduit":              "Conduit",
+  "block.seconddawnrp.power_relay":          "Power Relay",
+  "block.seconddawnrp.fuel_tank":            "Fuel Tank"
 }

@@ -10,6 +10,7 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
 import net.minecraft.client.gui.screen.ingame.HandledScreens;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemGroups;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Identifier;
@@ -44,6 +45,7 @@ import net.shard.seconddawnrp.playerdata.PlayerProfileService;
 import net.shard.seconddawnrp.playerdata.ProfileSyncService;
 import net.shard.seconddawnrp.playerdata.persistence.ProfileRepository;
 import net.shard.seconddawnrp.playerdata.persistence.SqlProfileRepository;
+import net.shard.seconddawnrp.registry.ModBlocks;
 import net.shard.seconddawnrp.registry.ModItems;
 import net.shard.seconddawnrp.registry.ModScreenHandlers;
 import net.shard.seconddawnrp.tasksystem.command.TaskCommands;
@@ -74,6 +76,13 @@ import net.shard.seconddawnrp.degradation.network.DegradationNetworking;
 import net.shard.seconddawnrp.degradation.repository.DegradationConfigRepository;
 import net.shard.seconddawnrp.degradation.repository.JsonComponentRepository;
 import net.shard.seconddawnrp.degradation.service.DegradationService;
+import net.shard.seconddawnrp.warpcore.command.WarpCoreCommands;
+import net.shard.seconddawnrp.warpcore.data.WarpCoreConfig;
+import net.shard.seconddawnrp.warpcore.network.WarpCoreNetworking;
+import net.shard.seconddawnrp.warpcore.repository.JsonWarpCoreRepository;
+import net.shard.seconddawnrp.warpcore.repository.WarpCoreConfigRepository;
+import net.shard.seconddawnrp.warpcore.service.WarpCoreService;
+
 import java.nio.file.Path;
 
 public class SecondDawnRP implements ModInitializer {
@@ -92,10 +101,12 @@ public class SecondDawnRP implements ModInitializer {
     public static GmEventService GM_EVENT_SERVICE;
     public static GmPermissionService GM_PERMISSION_SERVICE;
     public static DegradationService DEGRADATION_SERVICE;
+    public static WarpCoreService WARP_CORE_SERVICE;
 
     @Override
     public void onInitialize() {
         ModItems.register();
+        ModBlocks.register();
 
         ItemGroupEvents.modifyEntriesEvent(ItemGroups.TOOLS).register(entries -> {
             entries.add(ModItems.TASK_PAD);
@@ -103,6 +114,17 @@ public class SecondDawnRP implements ModInitializer {
             entries.add(ModItems.TASK_TERMINAL_TOOL);
             entries.add(ModItems.ENGINEERING_PAD);
             entries.add(ModItems.COMPONENT_REGISTRATION_TOOL);
+            entries.add(ModItems.WARP_CORE_TOOL);
+            entries.add(ModItems.FUEL_ROD);
+            entries.add(ModItems.CONTAINMENT_CELL);
+            entries.add(ModItems.RESONANCE_COIL);
+            entries.add(Item.fromBlock(ModBlocks.WARP_CORE_CASING));
+            entries.add(Item.fromBlock(ModBlocks.WARP_CORE_INJECTOR));
+            entries.add(Item.fromBlock(ModBlocks.WARP_CORE_COLUMN));
+            entries.add(Item.fromBlock(ModBlocks.WARP_CORE_CONTROLLER));
+            entries.add(Item.fromBlock(ModBlocks.CONDUIT));
+            entries.add(Item.fromBlock(ModBlocks.POWER_RELAY));
+            entries.add(Item.fromBlock(ModBlocks.FUEL_TANK));
 
         });
 
@@ -230,10 +252,9 @@ public class SecondDawnRP implements ModInitializer {
                 if (profile != null) {
                     TASK_SERVICE.saveTaskState(profile);
                 }
-            }
+            }        WARP_CORE_SERVICE.save();
             DEGRADATION_SERVICE.saveAll();
             PROFILE_MANAGER.saveAll();
-
             if (DATABASE_MANAGER != null) {
                 try {
                     DATABASE_MANAGER.close();
@@ -322,10 +343,14 @@ public class SecondDawnRP implements ModInitializer {
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             DEGRADATION_SERVICE.setServer(server);
             DEGRADATION_SERVICE.reload();
+            WARP_CORE_SERVICE.setServer(server);
+            WARP_CORE_SERVICE.reload();
         });
 
         ServerTickEvents.END_SERVER_TICK.register(server ->
                 DEGRADATION_SERVICE.tick(server));
+        ServerTickEvents.END_SERVER_TICK.register(server ->
+                WARP_CORE_SERVICE.tick(server));
 
         ClientPlayNetworking.registerGlobalReceiver(
                 GmToolRefreshS2CPacket.ID,
@@ -338,6 +363,28 @@ public class SecondDawnRP implements ModInitializer {
                     }
                 })
         );
+
+        WarpCoreConfigRepository warpCoreConfigRepo =
+                new WarpCoreConfigRepository(configDir);
+        try { warpCoreConfigRepo.init(); } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize warp core config", e);
+        }
+        WarpCoreConfig warpCoreConfig = warpCoreConfigRepo.load();
+
+        JsonWarpCoreRepository warpCoreRepository =
+                new JsonWarpCoreRepository(configDir);
+        try { warpCoreRepository.init(); } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize warp core repository", e);
+        }
+
+        WARP_CORE_SERVICE = new WarpCoreService(warpCoreRepository, warpCoreConfig);
+
+        WarpCoreNetworking.registerPayloads();
+
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                WarpCoreCommands.register(dispatcher, registryAccess, environment)
+        );
+
 
 
     }

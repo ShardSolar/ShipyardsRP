@@ -1,0 +1,16 @@
+{
+  "variants": {
+    "axis=y": {
+      "model": "seconddawnrp:block/conduit"
+    },
+    "axis=z": {
+      "model": "seconddawnrp:block/conduit",
+      "x": 90
+    },
+    "axis=x": {
+      "model": "seconddawnrp:block/conduit",
+      "x": 90,
+      "y": 90
+    }
+  }
+}

@@ -29,6 +29,8 @@ public class DegradationService {
     private final Map<String, Integer> pulseCounters = new HashMap<>();
 
     private MinecraftServer server;
+    private boolean reactorCritical = false;
+    private double reactorDrainMultiplier = 1.0;
     private final ComponentIntegrityChecker integrityChecker = new ComponentIntegrityChecker(this);
 
     public DegradationService(
@@ -74,11 +76,14 @@ public class DegradationService {
         long elapsed = now - entry.getLastDrainTickMs();
         if (elapsed < config.getDrainIntervalMs()) return;
 
-        int drain = switch (entry.getStatus()) {
+        int baseDrain = switch (entry.getStatus()) {
             case NOMINAL   -> config.getDrainPerTickNominal();
             case DEGRADED  -> config.getDrainPerTickDegraded();
             case CRITICAL, OFFLINE -> config.getDrainPerTickCritical();
         };
+        int drain = reactorCritical
+                ? (int) Math.ceil(baseDrain * reactorDrainMultiplier)
+                : baseDrain;
 
         ComponentStatus previousStatus = entry.getStatus();
         entry.setHealth(entry.getHealth() - drain);
@@ -272,6 +277,20 @@ public class DegradationService {
     public DegradationConfig getConfig() {
         return config;
     }
+
+    /**
+     * Called by WarpCoreService when the reactor enters or leaves CRITICAL/FAILED state.
+     * While critical, all component drain rates are multiplied by the given multiplier.
+     */
+    public void setReactorCritical(boolean critical, double multiplier) {
+        this.reactorCritical = critical;
+        this.reactorDrainMultiplier = multiplier;
+        if (critical) {
+            System.out.println("[SecondDawnRP] Reactor critical — degradation multiplier: " + multiplier + "x");
+        }
+    }
+
+    public boolean isReactorCritical() { return reactorCritical; }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 

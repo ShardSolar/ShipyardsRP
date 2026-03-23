@@ -8,7 +8,7 @@ import net.shard.seconddawnrp.degradation.network.ComponentWarningS2CPacket;
 import net.shard.seconddawnrp.degradation.network.OpenEngineeringPadS2CPacket;
 import net.shard.seconddawnrp.degradation.screen.EngineeringPadScreen;
 
-/*
+/**
  * Registers all client-side packet receivers for the degradation system.
  *
  * <p>Handles:
@@ -94,7 +94,12 @@ public final class ComponentWarningClientHandler {
                 OpenEngineeringPadS2CPacket.ID,
                 (payload, context) -> context.client().execute(() ->
                         context.client().setScreen(
-                                new EngineeringPadScreen(payload.components()))
+                                new EngineeringPadScreen(
+                                        payload.components(),
+                                        payload.warpCoreState(),
+                                        payload.warpCoreFuel(),
+                                        payload.warpCoreMaxFuel(),
+                                        payload.warpCorePower()))
                 )
         );
     }
