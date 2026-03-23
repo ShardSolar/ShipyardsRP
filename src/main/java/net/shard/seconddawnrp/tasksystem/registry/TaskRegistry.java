@@ -1,6 +1,6 @@
 package net.shard.seconddawnrp.tasksystem.registry;
 
-import net.shard.seconddawnrp.divison.Division;
+import net.shard.seconddawnrp.division.Division;
 import net.shard.seconddawnrp.tasksystem.data.TaskTemplate;
 
 import java.util.*;

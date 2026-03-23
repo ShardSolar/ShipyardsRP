@@ -1,6 +1,6 @@
 package net.shard.seconddawnrp.tasksystem.data;
 
-import net.shard.seconddawnrp.divison.Division;
+import net.shard.seconddawnrp.division.Division;
 
 import java.util.Objects;
 

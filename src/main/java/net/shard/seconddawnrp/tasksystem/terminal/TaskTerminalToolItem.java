@@ -16,7 +16,7 @@ import net.minecraft.util.TypedActionResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import net.shard.seconddawnrp.SecondDawnRP;
-import net.shard.seconddawnrp.divison.Division;
+import net.shard.seconddawnrp.division.Division;
 import net.shard.seconddawnrp.playerdata.PlayerProfile;
 
 import java.util.List;

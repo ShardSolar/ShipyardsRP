@@ -12,7 +12,7 @@ import net.shard.seconddawnrp.gmevent.data.SpawnBehaviour;
 import net.shard.seconddawnrp.gmevent.network.*;
 import net.shard.seconddawnrp.gmevent.screen.SpawnConfigScreenHandler.ConfigTab;
 import net.shard.seconddawnrp.gmevent.network.GmToolRefreshS2CPacket.TemplateEntry;
-import net.shard.seconddawnrp.divison.Division;
+import net.shard.seconddawnrp.division.Division;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;

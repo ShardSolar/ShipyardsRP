@@ -6,7 +6,7 @@ import com.google.gson.JsonObject;
 import net.minecraft.resource.Resource;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.util.Identifier;
-import net.shard.seconddawnrp.divison.Division;
+import net.shard.seconddawnrp.division.Division;
 import net.shard.seconddawnrp.tasksystem.data.TaskObjectiveType;
 import net.shard.seconddawnrp.tasksystem.data.TaskTemplate;
 import net.shard.seconddawnrp.tasksystem.registry.TaskRegistry;

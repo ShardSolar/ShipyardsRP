@@ -1,7 +1,7 @@
 package net.shard.seconddawnrp.playerdata;
 
-import net.shard.seconddawnrp.divison.Division;
-import net.shard.seconddawnrp.divison.Rank;
+import net.shard.seconddawnrp.division.Division;
+import net.shard.seconddawnrp.division.Rank;
 
 public class LuckPermsGroupMapper {
 

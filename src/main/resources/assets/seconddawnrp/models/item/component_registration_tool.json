@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "seconddawnrp:item/component_registration_tool"
+  }
+}

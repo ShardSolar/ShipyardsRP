@@ -3,6 +3,7 @@ package net.shard.seconddawnrp;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.gui.screen.ingame.HandledScreens;
+import net.shard.seconddawnrp.degradation.client.ComponentWarningClientHandler;
 import net.shard.seconddawnrp.gmevent.client.GmKeybindings;
 import net.shard.seconddawnrp.gmevent.client.GmKeyInputHandler;
 import net.shard.seconddawnrp.gmevent.network.GmToolRefreshS2CPacket;
@@ -28,7 +29,7 @@ public class SecondDawnRPClient implements ClientModInitializer {
         HandledScreens.register(ModScreenHandlers.TERMINAL_SCREEN, TerminalScreen::new);
         HandledScreens.register(ModScreenHandlers.SPAWN_CONFIG_SCREEN, SpawnConfigScreen::new);
         HandledScreens.register(ModScreenHandlers.SPAWN_ITEM_SCREEN, SpawnItemScreen::new);
-
+        ComponentWarningClientHandler.register();
         // GM keybindings
         GmKeybindings.register();
         GmKeyInputHandler.register();

@@ -1,7 +1,7 @@
 package net.shard.seconddawnrp.tasksystem.terminal;
 
 import net.shard.seconddawnrp.database.DatabaseManager;
-import net.shard.seconddawnrp.divison.Division;
+import net.shard.seconddawnrp.division.Division;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;

@@ -17,6 +17,9 @@ import net.shard.seconddawnrp.database.DatabaseBootstrap;
 import net.shard.seconddawnrp.database.DatabaseConfig;
 import net.shard.seconddawnrp.database.DatabaseManager;
 import net.shard.seconddawnrp.database.DatabaseMigrations;
+import net.shard.seconddawnrp.degradation.event.ComponentBlockBreakListener;
+import net.shard.seconddawnrp.degradation.event.ComponentDamageListener;
+import net.shard.seconddawnrp.degradation.event.ComponentNamingChatListener;
 import net.shard.seconddawnrp.gmevent.command.GmEventCommands;
 import net.shard.seconddawnrp.gmevent.data.GmEventConfig;
 import net.shard.seconddawnrp.gmevent.event.GmDamageListener;
@@ -63,6 +66,14 @@ import net.shard.seconddawnrp.tasksystem.terminal.TaskTerminalManager;
 import net.shard.seconddawnrp.tasksystem.terminal.TaskTerminalRepository;
 import net.shard.seconddawnrp.tasksystem.terminal.TerminalInteractListener;
 import net.shard.seconddawnrp.gmevent.event.MobDeathEventListener;
+import net.shard.seconddawnrp.degradation.client.ComponentWarningClientHandler;
+import net.shard.seconddawnrp.degradation.command.EngineeringCommands;
+import net.shard.seconddawnrp.degradation.data.DegradationConfig;
+import net.shard.seconddawnrp.degradation.event.ComponentInteractListener;
+import net.shard.seconddawnrp.degradation.network.DegradationNetworking;
+import net.shard.seconddawnrp.degradation.repository.DegradationConfigRepository;
+import net.shard.seconddawnrp.degradation.repository.JsonComponentRepository;
+import net.shard.seconddawnrp.degradation.service.DegradationService;
 import java.nio.file.Path;
 
 public class SecondDawnRP implements ModInitializer {
@@ -80,7 +91,7 @@ public class SecondDawnRP implements ModInitializer {
     public static TaskTerminalManager TERMINAL_MANAGER;
     public static GmEventService GM_EVENT_SERVICE;
     public static GmPermissionService GM_PERMISSION_SERVICE;
-
+    public static DegradationService DEGRADATION_SERVICE;
 
     @Override
     public void onInitialize() {
@@ -90,6 +101,9 @@ public class SecondDawnRP implements ModInitializer {
             entries.add(ModItems.TASK_PAD);
             entries.add(ModItems.OPERATIONS_PAD);
             entries.add(ModItems.TASK_TERMINAL_TOOL);
+            entries.add(ModItems.ENGINEERING_PAD);
+            entries.add(ModItems.COMPONENT_REGISTRATION_TOOL);
+
         });
 
         ModScreenHandlers.register();
@@ -217,7 +231,7 @@ public class SecondDawnRP implements ModInitializer {
                     TASK_SERVICE.saveTaskState(profile);
                 }
             }
-
+            DEGRADATION_SERVICE.saveAll();
             PROFILE_MANAGER.saveAll();
 
             if (DATABASE_MANAGER != null) {
@@ -279,6 +293,39 @@ public class SecondDawnRP implements ModInitializer {
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             GM_EVENT_SERVICE.tick(server);
         });
+
+        DegradationConfigRepository degradationConfigRepo =
+                new DegradationConfigRepository(configDir);
+        try { degradationConfigRepo.init(); } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize degradation config", e);
+        }
+        DegradationConfig degradationConfig = degradationConfigRepo.load();
+
+        JsonComponentRepository componentRepository = new JsonComponentRepository(configDir);
+        try { componentRepository.init(); } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize component repository", e);
+        }
+
+        DEGRADATION_SERVICE = new DegradationService(
+                componentRepository, TASK_SERVICE, degradationConfig);
+
+        DegradationNetworking.registerPayloads();
+        new ComponentInteractListener().register();
+        new ComponentNamingChatListener().register();
+        new ComponentDamageListener().register();
+        new ComponentBlockBreakListener().register();
+
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                EngineeringCommands.register(dispatcher, registryAccess, environment)
+        );
+
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            DEGRADATION_SERVICE.setServer(server);
+            DEGRADATION_SERVICE.reload();
+        });
+
+        ServerTickEvents.END_SERVER_TICK.register(server ->
+                DEGRADATION_SERVICE.tick(server));
 
         ClientPlayNetworking.registerGlobalReceiver(
                 GmToolRefreshS2CPacket.ID,

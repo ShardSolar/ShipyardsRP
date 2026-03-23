@@ -1,7 +1,7 @@
 package net.shard.seconddawnrp.tasksystem.repository;
 
 import net.shard.seconddawnrp.database.DatabaseManager;
-import net.shard.seconddawnrp.divison.Division;
+import net.shard.seconddawnrp.division.Division;
 import net.shard.seconddawnrp.tasksystem.data.OpsTaskPoolEntry;
 import net.shard.seconddawnrp.tasksystem.data.OpsTaskStatus;
 import net.shard.seconddawnrp.tasksystem.data.TaskObjectiveType;

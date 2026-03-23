@@ -1,5 +1,9 @@
 {
   "key.seconddawnrp.gm_spawn": "GM Spawn",
   "key.seconddawnrp.gm_despawn": "GM Despawn All",
-  "category.seconddawnrp.gm": "Second Dawn RP — GM Tools"
+  "category.seconddawnrp.gm": "Second Dawn RP — GM Tools",
+  "item.seconddawnrp.engineering_pad": "Engineering Systems Pad",
+  "item.seconddawnrp.task_pad": "Task Pad",
+  "item.seconddawnrp.operations_pad": "Operations Task Pad",
+  "item.seconddawnrp.component_registration_tool": "Component Registration Tool"
 }

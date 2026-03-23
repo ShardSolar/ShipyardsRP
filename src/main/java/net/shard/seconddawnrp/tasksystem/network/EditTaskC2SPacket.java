@@ -4,7 +4,7 @@ import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.packet.CustomPayload;
 import net.shard.seconddawnrp.SecondDawnRP;
-import net.shard.seconddawnrp.divison.Division;
+import net.shard.seconddawnrp.division.Division;
 
 public record EditTaskC2SPacket(
         String taskId,

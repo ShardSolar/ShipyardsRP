@@ -3,7 +3,10 @@ package net.shard.seconddawnrp.registry;
 import net.minecraft.item.Item;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
+import net.minecraft.util.Identifier;
 import net.shard.seconddawnrp.SecondDawnRP;
+import net.shard.seconddawnrp.degradation.item.ComponentRegistrationTool;
+import net.shard.seconddawnrp.degradation.item.EngineeringPadItem;
 import net.shard.seconddawnrp.gmevent.item.SpawnBlockConfigTool;
 import net.shard.seconddawnrp.gmevent.item.SpawnItemTool;
 import net.shard.seconddawnrp.tasksystem.pad.OperationsPadItem;
@@ -32,6 +35,16 @@ public class ModItems {
             "spawn_item_tool",
             new SpawnItemTool(new Item.Settings().maxCount(1))
     );
+
+    public static final Item ENGINEERING_PAD = register(
+            "engineering_pad",
+            new EngineeringPadItem(new Item.Settings().maxCount(1))
+    );
+
+    public static final Item COMPONENT_REGISTRATION_TOOL = Registry.register(
+            Registries.ITEM,
+            Identifier.of(SecondDawnRP.MOD_ID, "component_registration_tool"),
+            new ComponentRegistrationTool(new Item.Settings().maxCount(1)));
 
 
     private static Item register(String id, Item item) {

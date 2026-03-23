@@ -1,8 +1,8 @@
 package net.shard.seconddawnrp.playerdata.persistence;
 
 import net.shard.seconddawnrp.database.DatabaseManager;
-import net.shard.seconddawnrp.divison.Division;
-import net.shard.seconddawnrp.divison.Rank;
+import net.shard.seconddawnrp.division.Division;
+import net.shard.seconddawnrp.division.Rank;
 import net.shard.seconddawnrp.playerdata.Billet;
 import net.shard.seconddawnrp.playerdata.Certification;
 import net.shard.seconddawnrp.playerdata.DutyStatus;

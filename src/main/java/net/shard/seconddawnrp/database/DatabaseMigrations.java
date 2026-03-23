@@ -8,7 +8,7 @@ import java.sql.Statement;
 
 public final class DatabaseMigrations {
 
-    public static final int CURRENT_SCHEMA_VERSION = 2;
+    public static final int CURRENT_SCHEMA_VERSION = 3;
 
     public void migrate(Connection connection) throws SQLException {
         createSchemaVersionTableIfMissing(connection);
@@ -25,6 +25,12 @@ public final class DatabaseMigrations {
             applyVersion2(connection);
             setSchemaVersion(connection, 2);
             currentVersion = 2;
+        }
+
+        if (currentVersion < 3) {
+            applyVersion3(connection);
+            setSchemaVersion(connection, 3);
+            currentVersion = 3;
         }
 
         if (currentVersion > CURRENT_SCHEMA_VERSION) {
@@ -155,6 +161,31 @@ public final class DatabaseMigrations {
                             + "allowed_divisions TEXT NOT NULL, "
                             + "PRIMARY KEY (world_key, block_pos_long)"
                             + ")"
+            );
+        }
+    }
+
+    private void applyVersion3(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute(
+                    "CREATE TABLE IF NOT EXISTS components ("
+                            + "component_id TEXT PRIMARY KEY, "
+                            + "world_key TEXT NOT NULL, "
+                            + "block_pos_long INTEGER NOT NULL, "
+                            + "block_type_id TEXT NOT NULL, "
+                            + "display_name TEXT NOT NULL, "
+                            + "health INTEGER NOT NULL, "
+                            + "status TEXT NOT NULL, "
+                            + "last_drain_tick_ms INTEGER NOT NULL, "
+                            + "last_task_generated_ms INTEGER NOT NULL, "
+                            + "registered_by_uuid TEXT, "
+                            + "repair_item_id TEXT, "
+                            + "repair_item_count INTEGER NOT NULL DEFAULT 0"
+                            + ")"
+            );
+            statement.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_components_position "
+                            + "ON components (world_key, block_pos_long)"
             );
         }
     }

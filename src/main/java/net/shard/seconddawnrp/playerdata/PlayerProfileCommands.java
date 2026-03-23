@@ -8,8 +8,8 @@ import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.shard.seconddawnrp.SecondDawnRP;
-import net.shard.seconddawnrp.divison.Division;
-import net.shard.seconddawnrp.divison.Rank;
+import net.shard.seconddawnrp.division.Division;
+import net.shard.seconddawnrp.division.Rank;
 
 public class PlayerProfileCommands {
 

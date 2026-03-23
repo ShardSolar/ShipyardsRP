@@ -19,7 +19,7 @@
   },
 
   "mixins": [
-    "shipyardsrp.mixins.json"
+    "seconddawnrp.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=${loader_version}",

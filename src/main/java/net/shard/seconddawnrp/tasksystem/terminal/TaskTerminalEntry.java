@@ -1,7 +1,7 @@
 package net.shard.seconddawnrp.tasksystem.terminal;
 
 import net.minecraft.util.math.BlockPos;
-import net.shard.seconddawnrp.divison.Division;
+import net.shard.seconddawnrp.division.Division;
 
 import java.util.ArrayList;
 import java.util.List;

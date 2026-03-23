@@ -1,8 +1,8 @@
 package net.shard.seconddawnrp.playerdata;
 
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.shard.seconddawnrp.divison.Division;
-import net.shard.seconddawnrp.divison.Rank;
+import net.shard.seconddawnrp.division.Division;
+import net.shard.seconddawnrp.division.Rank;
 
 import java.util.UUID;
 

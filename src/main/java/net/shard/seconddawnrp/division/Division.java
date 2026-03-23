@@ -1,8 +1,9 @@
-package net.shard.seconddawnrp.divison;
+package net.shard.seconddawnrp.division;
 
 public enum Division {
     COMMAND("command"),
     OPERATIONS("operations"),
+    ENGINEERING("engineering"),
     SCIENCE("science"),
     UNASSIGNED("unassigned");
 

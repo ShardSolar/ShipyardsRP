@@ -5,14 +5,13 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.shard.seconddawnrp.SecondDawnRP;
-import net.shard.seconddawnrp.divison.Division;
+import net.shard.seconddawnrp.division.Division;
 import net.shard.seconddawnrp.gmevent.network.*;
 import net.shard.seconddawnrp.playerdata.PlayerProfile;
 import net.shard.seconddawnrp.tasksystem.data.OpsTaskStatus;
 import net.shard.seconddawnrp.tasksystem.data.TaskAssignmentSource;
 import net.shard.seconddawnrp.tasksystem.data.TaskTemplate;
 import net.shard.seconddawnrp.tasksystem.pad.AdminTaskViewModel;
-import net.shard.seconddawnrp.tasksystem.network.EditTaskC2SPacket;
 
 import java.util.List;
 
@@ -514,7 +513,7 @@ public class ModNetworking {
             player.sendMessage(Text.literal("[GM] No permission."), false); return;
         }
         try {
-            var division = net.shard.seconddawnrp.divison.Division.valueOf(packet.divisionName());
+            var division = net.shard.seconddawnrp.division.Division.valueOf(packet.divisionName());
             var entry = SecondDawnRP.TASK_SERVICE.createPoolTask(
                     "gm_" + packet.templateId() + "_" + System.currentTimeMillis() % 10000,
                     packet.taskDisplayName(), packet.taskDescription(),

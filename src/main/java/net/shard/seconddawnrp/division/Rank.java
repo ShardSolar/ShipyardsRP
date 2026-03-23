@@ -1,4 +1,4 @@
-package net.shard.seconddawnrp.divison;
+package net.shard.seconddawnrp.division;
 
 public enum Rank {
     // Enlisted
