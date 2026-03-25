@@ -3,6 +3,7 @@ package net.shard.seconddawnrp.registry;
 import net.minecraft.block.AbstractBlock;
 import net.minecraft.block.Block;
 import net.minecraft.block.MapColor;
+import net.minecraft.block.entity.BlockEntityType;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.registry.Registries;
@@ -12,6 +13,7 @@ import net.minecraft.util.Identifier;
 import net.shard.seconddawnrp.SecondDawnRP;
 import net.shard.seconddawnrp.warpcore.block.ConduitBlock;
 import net.shard.seconddawnrp.warpcore.block.WarpCoreControllerBlock;
+import net.shard.seconddawnrp.warpcore.block.WarpCoreControllerBlockEntity;
 
 public final class ModBlocks {
 
@@ -71,19 +73,41 @@ public final class ModBlocks {
                     .sounds(BlockSoundGroup.METAL)
                     .requiresTool()));
 
-    // ── Registration helper ───────────────────────────────────────────────────
+    // ── Block entity types ────────────────────────────────────────────────────
+
+    public static BlockEntityType<WarpCoreControllerBlockEntity> WARP_CORE_CONTROLLER_ENTITY;
+
+    // ── Registration ──────────────────────────────────────────────────────────
+
+    public static void register() {
+        // Register block entity type — must happen AFTER WARP_CORE_CONTROLLER is created above
+        WARP_CORE_CONTROLLER_ENTITY = Registry.register(
+                Registries.BLOCK_ENTITY_TYPE,
+                Identifier.of(SecondDawnRP.MOD_ID, "warp_core_controller"),
+                BlockEntityType.Builder.create(
+                        (pos, state) -> new WarpCoreControllerBlockEntity(
+                                WARP_CORE_CONTROLLER_ENTITY, pos, state),
+                        WARP_CORE_CONTROLLER).build()
+        );
+
+        // Set the static TYPE reference — used by the no-arg convenience constructor
+        WarpCoreControllerBlockEntity.TYPE = WARP_CORE_CONTROLLER_ENTITY;
+
+        // Register EnergyStorage.SIDED so TR/EP cables can extract energy
+        team.reborn.energy.api.EnergyStorage.SIDED.registerForBlockEntity(
+                (blockEntity, direction) -> blockEntity.energyStorage,
+                WARP_CORE_CONTROLLER_ENTITY
+        );
+    }
+
+    // ── Helper ────────────────────────────────────────────────────────────────
 
     private static <T extends Block> T register(String id, T block) {
         T registered = Registry.register(Registries.BLOCK,
                 Identifier.of(SecondDawnRP.MOD_ID, id), block);
-        // Register a BlockItem so the block appears in the inventory
         Registry.register(Registries.ITEM,
                 Identifier.of(SecondDawnRP.MOD_ID, id),
                 new BlockItem(registered, new Item.Settings()));
         return registered;
-    }
-
-    public static void register() {
-        // Called from SecondDawnRP.onInitialize() to trigger static init
     }
 }

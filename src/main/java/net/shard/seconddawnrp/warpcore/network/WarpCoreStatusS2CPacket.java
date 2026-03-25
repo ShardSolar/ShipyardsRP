@@ -11,9 +11,10 @@ import net.shard.seconddawnrp.warpcore.service.WarpCoreService;
 
 /**
  * Sent server → client to populate the Warp Core Monitor screen.
- * Also broadcast to all Engineering players when state changes.
+ * Carries entryId so the screen knows which core to target for button actions.
  */
 public record WarpCoreStatusS2CPacket(
+        String entryId,
         boolean registered,
         String state,
         int fuelRods,
@@ -22,6 +23,7 @@ public record WarpCoreStatusS2CPacket(
         int fuelPercent,
         int stability,
         int coilHealth,
+        int coilCount,
         String fuelLabel
 ) implements CustomPayload {
 
@@ -31,6 +33,7 @@ public record WarpCoreStatusS2CPacket(
     public static final PacketCodec<RegistryByteBuf, WarpCoreStatusS2CPacket> CODEC =
             PacketCodec.of(
                     (value, buf) -> {
+                        buf.writeString(value.entryId() != null ? value.entryId() : "");
                         buf.writeBoolean(value.registered());
                         buf.writeString(value.state());
                         buf.writeInt(value.fuelRods());
@@ -39,11 +42,14 @@ public record WarpCoreStatusS2CPacket(
                         buf.writeInt(value.fuelPercent());
                         buf.writeInt(value.stability());
                         buf.writeInt(value.coilHealth());
+                        buf.writeInt(value.coilCount());
                         buf.writeString(value.fuelLabel());
                     },
                     buf -> new WarpCoreStatusS2CPacket(
+                            buf.readString(),  // entryId
                             buf.readBoolean(),
                             buf.readString(),
+                            buf.readInt(),
                             buf.readInt(),
                             buf.readInt(),
                             buf.readInt(),
@@ -57,20 +63,13 @@ public record WarpCoreStatusS2CPacket(
     @Override
     public Id<? extends CustomPayload> getId() { return ID; }
 
-    public static WarpCoreStatusS2CPacket fromService(WarpCoreService service) {
-        if (!service.isRegistered()) {
-            return new WarpCoreStatusS2CPacket(
-                    false, ReactorState.OFFLINE.name(), 0,
-                    service.getConfig().getMaxFuelRods(), 0, 0, 0, 100, "Fuel Rods");
-        }
-        WarpCoreEntry entry = service.getEntry().get();
-        var adapter = service.getAdapter();
-        int coilHealth = entry.getResonanceCoilComponentId() != null
-                ? SecondDawnRP.DEGRADATION_SERVICE
-                .getById(entry.getResonanceCoilComponentId())
-                .map(c -> c.getHealth()).orElse(100) : 100;
-
+    public static WarpCoreStatusS2CPacket fromEntry(WarpCoreEntry entry, int coilHealth) {
+        var service = SecondDawnRP.WARP_CORE_SERVICE;
+        // Force an adapter refresh so cable state is current when player opens screen
+        service.refreshAdapterForEntry(entry);
+        var adapter = service.getAdapter(entry.getEntryId());
         return new WarpCoreStatusS2CPacket(
+                entry.getEntryId(),
                 true,
                 entry.getState().name(),
                 entry.getFuelRods(),
@@ -79,7 +78,23 @@ public record WarpCoreStatusS2CPacket(
                 adapter != null ? adapter.getFuelLevelPercent() : 0,
                 adapter != null ? adapter.getStability() : 0,
                 coilHealth,
+                entry.getResonanceCoilIds().size(),
                 adapter != null ? adapter.getPrimaryFuelLabel() : "Fuel Rods"
         );
+    }
+
+    public static WarpCoreStatusS2CPacket fromService(WarpCoreService service) {
+        if (!service.isRegistered()) {
+            return new WarpCoreStatusS2CPacket("", false,
+                    ReactorState.OFFLINE.name(), 0,
+                    service.getConfig().getMaxFuelRods(), 0, 0, 0, -1, 0, "Fuel Rods");
+        }
+        var entry = service.getEntry();
+        if (entry.isEmpty()) {
+            return new WarpCoreStatusS2CPacket("", true,
+                    ReactorState.OFFLINE.name(), 0,
+                    service.getConfig().getMaxFuelRods(), 0, 0, 0, -1, 0, "Fuel Rods");
+        }
+        return fromEntry(entry.get(), service.getCoilHealth(entry.get()));
     }
 }

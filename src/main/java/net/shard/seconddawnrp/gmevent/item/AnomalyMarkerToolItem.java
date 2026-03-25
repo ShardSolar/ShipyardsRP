@@ -62,27 +62,17 @@ public class AnomalyMarkerToolItem extends Item {
         Optional<AnomalyEntry> existing =
                 SecondDawnRP.ANOMALY_SERVICE.getByPosition(worldKey, posLong);
 
-        if (player.isSneaking() && existing.isPresent()) {
-            SecondDawnRP.ANOMALY_SERVICE.unregister(worldKey, posLong);
-            player.sendMessage(Text.literal("Anomaly marker removed.")
-                    .formatted(Formatting.YELLOW), false);
-            return TypedActionResult.success(user.getStackInHand(hand));
-        }
-
         if (existing.isPresent()) {
-            // Cycle type
-            AnomalyEntry entry = existing.get();
-            AnomalyType[] types = AnomalyType.values();
-            AnomalyType next = types[(entry.getType().ordinal() + 1) % types.length];
-            entry.setType(next);
-            SecondDawnRP.ANOMALY_SERVICE.saveEntry(entry);
-            player.sendMessage(
-                    Text.literal("Anomaly type set to: ")
-                            .formatted(Formatting.GRAY)
-                            .append(Text.literal(next.getDisplayName())
-                                    .formatted(next.isCriticalAlert()
-                                            ? Formatting.RED : Formatting.YELLOW)),
-                    false);
+            if (player.isSneaking()) {
+                SecondDawnRP.ANOMALY_SERVICE.unregister(worldKey, posLong);
+                player.sendMessage(Text.literal("Anomaly marker removed.")
+                        .formatted(Formatting.YELLOW), false);
+                return TypedActionResult.success(user.getStackInHand(hand));
+            }
+            // Plain right-click — open config screen
+            net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(player,
+                    net.shard.seconddawnrp.gmevent.network.OpenAnomalyConfigS2CPacket
+                            .from(existing.get()));
             return TypedActionResult.success(user.getStackInHand(hand));
         }
 

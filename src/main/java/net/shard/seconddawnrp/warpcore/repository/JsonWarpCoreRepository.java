@@ -1,30 +1,22 @@
 package net.shard.seconddawnrp.warpcore.repository;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonObject;
+import com.google.gson.*;
 import net.shard.seconddawnrp.warpcore.data.ReactorState;
 import net.shard.seconddawnrp.warpcore.data.WarpCoreEntry;
 
-import java.io.IOException;
-import java.io.Reader;
-import java.io.Writer;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.util.Optional;
-import java.util.UUID;
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
 
 /**
- * JSON-backed warp core repository.
- * Stored at {@code config/assets/seconddawnrp/warpcore.json}.
- * Writes are atomic via .tmp swap.
+ * JSON-backed warp core repository supporting multiple warp cores.
+ * Stored as a JSON array at {@code config/assets/seconddawnrp/warpcore.json}.
+ * Backward compatible with old single-object saves.
  */
 public class JsonWarpCoreRepository implements WarpCoreRepository {
 
     private static final String FILE_NAME = "warpcore.json";
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-
     private final Path filePath;
 
     public JsonWarpCoreRepository(Path configDir) {
@@ -38,72 +30,92 @@ public class JsonWarpCoreRepository implements WarpCoreRepository {
     }
 
     @Override
-    public void save(WarpCoreEntry entry) {
-        JsonObject obj = new JsonObject();
-        obj.addProperty("worldKey", entry.getWorldKey());
-        obj.addProperty("blockPosLong", entry.getBlockPosLong());
-        obj.addProperty("state", entry.getState().name());
-        obj.addProperty("fuelRods", entry.getFuelRods());
-        obj.addProperty("lastFuelDrainMs", entry.getLastFuelDrainMs());
-        obj.addProperty("lastFaultTaskMs", entry.getLastFaultTaskMs());
-        obj.addProperty("currentPowerOutput", entry.getCurrentPowerOutput());
-        obj.addProperty("resonanceCoilComponentId", entry.getResonanceCoilComponentId());
-        obj.addProperty("registeredByUuid",
-                entry.getRegisteredByUuid() != null
-                        ? entry.getRegisteredByUuid().toString() : null);
-
+    public void saveAll(Collection<WarpCoreEntry> entries) {
+        JsonArray arr = new JsonArray();
+        for (WarpCoreEntry e : entries) arr.add(toJson(e));
         Path tmp = filePath.resolveSibling(FILE_NAME + ".tmp");
-        try (Writer w = Files.newBufferedWriter(tmp)) {
-            GSON.toJson(obj, w);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to write warpcore.tmp", e);
-        }
-        try {
-            Files.move(tmp, filePath,
-                    StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to replace warpcore.json", e);
-        }
+        try (Writer w = Files.newBufferedWriter(tmp)) { GSON.toJson(arr, w); }
+        catch (IOException e) { throw new RuntimeException("Failed to write warpcore.tmp", e); }
+        try { Files.move(tmp, filePath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE); }
+        catch (IOException e) { throw new RuntimeException("Failed to replace warpcore.json", e); }
     }
 
     @Override
-    public Optional<WarpCoreEntry> load() {
-        if (!Files.exists(filePath)) return Optional.empty();
+    public Collection<WarpCoreEntry> loadAll() {
+        if (!Files.exists(filePath)) return new ArrayList<>();
         try (Reader r = Files.newBufferedReader(filePath)) {
-            JsonObject obj = GSON.fromJson(r, JsonObject.class);
-            if (obj == null) return Optional.empty();
+            JsonElement el = GSON.fromJson(r, JsonElement.class);
+            if (el == null) return new ArrayList<>();
 
-            String uuidStr = obj.has("registeredByUuid")
-                    && !obj.get("registeredByUuid").isJsonNull()
-                    ? obj.get("registeredByUuid").getAsString() : null;
-            String coilId = obj.has("resonanceCoilComponentId")
-                    && !obj.get("resonanceCoilComponentId").isJsonNull()
-                    ? obj.get("resonanceCoilComponentId").getAsString() : null;
+            // Backward compat: old saves were a single JsonObject
+            if (el.isJsonObject()) {
+                WarpCoreEntry e = fromJson(el.getAsJsonObject());
+                return e != null ? List.of(e) : new ArrayList<>();
+            }
 
-            WarpCoreEntry entry = new WarpCoreEntry(
-                    obj.get("worldKey").getAsString(),
-                    obj.get("blockPosLong").getAsLong(),
-                    ReactorState.valueOf(obj.get("state").getAsString()),
-                    obj.get("fuelRods").getAsInt(),
-                    obj.get("lastFuelDrainMs").getAsLong(),
-                    obj.get("lastFaultTaskMs").getAsLong(),
-                    obj.get("currentPowerOutput").getAsInt(),
-                    coilId,
-                    uuidStr != null ? UUID.fromString(uuidStr) : null
-            );
-            return Optional.of(entry);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to load warpcore.json", e);
-        }
+            List<WarpCoreEntry> result = new ArrayList<>();
+            for (JsonElement item : el.getAsJsonArray()) {
+                WarpCoreEntry e = fromJson(item.getAsJsonObject());
+                if (e != null) result.add(e);
+            }
+            return result;
+        } catch (IOException e) { throw new RuntimeException("Failed to load warpcore.json", e); }
     }
 
     @Override
-    public void delete() {
-        try {
-            Files.deleteIfExists(filePath);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to delete warpcore.json", e);
+    public void delete(String entryId) {
+        List<WarpCoreEntry> entries = new ArrayList<>(loadAll());
+        entries.removeIf(e -> e.getEntryId().equals(entryId));
+        saveAll(entries);
+    }
+
+    // ── Serialisation ─────────────────────────────────────────────────────────
+
+    private static JsonObject toJson(WarpCoreEntry e) {
+        JsonObject o = new JsonObject();
+        o.addProperty("entryId", e.getEntryId());
+        o.addProperty("worldKey", e.getWorldKey());
+        o.addProperty("blockPosLong", e.getBlockPosLong());
+        o.addProperty("state", e.getState().name());
+        o.addProperty("fuelRods", e.getFuelRods());
+        o.addProperty("lastFuelDrainMs", e.getLastFuelDrainMs());
+        o.addProperty("lastFaultTaskMs", e.getLastFaultTaskMs());
+        o.addProperty("currentPowerOutput", e.getCurrentPowerOutput());
+        com.google.gson.JsonArray coils = new com.google.gson.JsonArray();
+        e.getResonanceCoilIds().forEach(coils::add);
+        o.add("resonanceCoilIds", coils);
+        o.addProperty("registeredByUuid",
+                e.getRegisteredByUuid() != null ? e.getRegisteredByUuid().toString() : null);
+        return o;
+    }
+
+    private static WarpCoreEntry fromJson(JsonObject o) {
+        if (o == null) return null;
+        String uuidStr = o.has("registeredByUuid") && !o.get("registeredByUuid").isJsonNull()
+                ? o.get("registeredByUuid").getAsString() : null;
+        java.util.List<String> coilIds = new java.util.ArrayList<>();
+        if (o.has("resonanceCoilIds") && o.get("resonanceCoilIds").isJsonArray()) {
+            o.get("resonanceCoilIds").getAsJsonArray()
+                    .forEach(el -> coilIds.add(el.getAsString()));
+        } else if (o.has("resonanceCoilComponentId") && !o.get("resonanceCoilComponentId").isJsonNull()) {
+            // backward compat with old single-coil saves
+            coilIds.add(o.get("resonanceCoilComponentId").getAsString());
         }
+        // Generate entryId from blockPosLong for old single-core saves
+        String entryId = o.has("entryId") ? o.get("entryId").getAsString()
+                : "wc_" + Long.toHexString(o.get("blockPosLong").getAsLong() & 0xFFFFFFL);
+
+        return new WarpCoreEntry(
+                entryId,
+                o.get("worldKey").getAsString(),
+                o.get("blockPosLong").getAsLong(),
+                ReactorState.valueOf(o.get("state").getAsString()),
+                o.get("fuelRods").getAsInt(),
+                o.get("lastFuelDrainMs").getAsLong(),
+                o.get("lastFaultTaskMs").getAsLong(),
+                o.get("currentPowerOutput").getAsInt(),
+                coilIds,
+                uuidStr != null ? UUID.fromString(uuidStr) : null
+        );
     }
 }

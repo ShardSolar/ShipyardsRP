@@ -7,6 +7,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.itemgroup.v1.FabricItemGroup;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
@@ -30,9 +31,11 @@ import net.shard.seconddawnrp.degradation.event.ComponentDamageListener;
 import net.shard.seconddawnrp.degradation.event.ComponentInteractListener;
 import net.shard.seconddawnrp.degradation.event.ComponentNamingChatListener;
 import net.shard.seconddawnrp.degradation.network.DegradationNetworking;
+import net.shard.seconddawnrp.degradation.network.LocateComponentS2CPacket;
 import net.shard.seconddawnrp.degradation.repository.DegradationConfigRepository;
 import net.shard.seconddawnrp.degradation.repository.JsonComponentRepository;
 import net.shard.seconddawnrp.degradation.service.DegradationService;
+import net.shard.seconddawnrp.gmevent.client.AnomalyClientHandler;
 import net.shard.seconddawnrp.gmevent.command.GmAnomalyCommands;
 import net.shard.seconddawnrp.gmevent.command.GmEnvCommands;
 import net.shard.seconddawnrp.gmevent.command.GmEventCommands;
@@ -43,6 +46,8 @@ import net.shard.seconddawnrp.gmevent.event.GmDamageListener;
 import net.shard.seconddawnrp.gmevent.event.GmMobHitListener;
 import net.shard.seconddawnrp.gmevent.event.MobDeathEventListener;
 import net.shard.seconddawnrp.gmevent.network.GmEventNetworking;
+import net.shard.seconddawnrp.gmevent.network.OpenAnomalyConfigS2CPacket;
+import net.shard.seconddawnrp.gmevent.network.SaveAnomalyConfigC2SPacket;
 import net.shard.seconddawnrp.gmevent.repository.*;
 import net.shard.seconddawnrp.gmevent.service.*;
 import net.shard.seconddawnrp.playerdata.DefaultProfileFactory;
@@ -283,6 +288,8 @@ public class SecondDawnRP implements ModInitializer {
 
         WARP_CORE_SERVICE = new WarpCoreService(warpCoreRepository, warpCoreConfig);
         WarpCoreNetworking.registerPayloads();
+        WarpCoreNetworking.registerServerReceivers();
+
 
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 WarpCoreCommands.register(dispatcher, registryAccess, environment));
@@ -321,6 +328,14 @@ public class SecondDawnRP implements ModInitializer {
 
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 GmTriggerCommands.register(dispatcher, registryAccess, environment));
+
+        PayloadTypeRegistry.playS2C().register(
+                OpenAnomalyConfigS2CPacket.ID, OpenAnomalyConfigS2CPacket.CODEC);
+        PayloadTypeRegistry.playC2S().register(
+                SaveAnomalyConfigC2SPacket.ID, SaveAnomalyConfigC2SPacket.CODEC);
+        AnomalyClientHandler.registerServerReceiver();
+        PayloadTypeRegistry.playS2C().register(
+                LocateComponentS2CPacket.ID, LocateComponentS2CPacket.CODEC);
 
         // INTERACT mode trigger right-click hook
         UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {

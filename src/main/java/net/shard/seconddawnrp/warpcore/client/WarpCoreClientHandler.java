@@ -4,10 +4,6 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.shard.seconddawnrp.warpcore.network.WarpCoreStatusS2CPacket;
 import net.shard.seconddawnrp.warpcore.screen.WarpCoreMonitorScreen;
 
-/**
- * Client-side receiver for warp core packets.
- * Must only be called from the client initializer.
- */
 public final class WarpCoreClientHandler {
 
     private WarpCoreClientHandler() {}
@@ -18,10 +14,11 @@ public final class WarpCoreClientHandler {
                 (payload, context) -> context.client().execute(() -> {
                     var current = context.client().currentScreen;
                     if (current instanceof WarpCoreMonitorScreen screen) {
-                        // Refresh live data if already open
                         screen.updateData(payload);
                     } else {
-                        context.client().setScreen(new WarpCoreMonitorScreen(payload));
+                        // entryId is carried in the packet — pass it to the screen for button actions
+                        context.client().setScreen(
+                                new WarpCoreMonitorScreen(payload, payload.entryId()));
                     }
                 })
         );

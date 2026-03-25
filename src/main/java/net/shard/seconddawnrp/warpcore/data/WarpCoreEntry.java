@@ -5,14 +5,16 @@ import java.util.UUID;
 /**
  * Persisted state of a registered warp core controller block.
  *
- * <p>There is intentionally only one warp core per server — the system
- * enforces this at registration time. The entry is keyed by world + position.
+ * <p>Multiple warp cores are supported. Each is identified by a unique
+ * {@code entryId} generated at registration time.
  *
- * <p>The resonance coil is tracked as a {@link net.shard.seconddawnrp.degradation.data.ComponentEntry}
- * in the degradation system. Its component ID is stored here for cross-system lookup.
+ * <p>TREnergy (Tech Reborn / Energized Power) is read from the controller
+ * block's own faces — cables connect directly to the controller. No remote
+ * source position is stored.
  */
 public class WarpCoreEntry {
 
+    private final String entryId;       // unique identifier, e.g. "wc_3fc4_69d1"
     private final String worldKey;
     private final long blockPosLong;
 
@@ -23,16 +25,11 @@ public class WarpCoreEntry {
     private long lastFuelDrainMs;
     private long lastFaultTaskMs;
     private int currentPowerOutput;
-
-    /**
-     * Component ID of the resonance coil registered in the degradation system.
-     * Null until a coil component is linked via {@code /warpcore linkcoil}.
-     */
-    private String resonanceCoilComponentId;
-
+    private final java.util.List<String> resonanceCoilIds;
     private UUID registeredByUuid;
 
     public WarpCoreEntry(
+            String entryId,
             String worldKey,
             long blockPosLong,
             ReactorState state,
@@ -40,8 +37,9 @@ public class WarpCoreEntry {
             long lastFuelDrainMs,
             long lastFaultTaskMs,
             int currentPowerOutput,
-            String resonanceCoilComponentId,
+            java.util.List<String> resonanceCoilIds,
             UUID registeredByUuid) {
+        this.entryId = entryId;
         this.worldKey = worldKey;
         this.blockPosLong = blockPosLong;
         this.state = state;
@@ -51,32 +49,30 @@ public class WarpCoreEntry {
         this.lastFuelDrainMs = lastFuelDrainMs;
         this.lastFaultTaskMs = lastFaultTaskMs;
         this.currentPowerOutput = currentPowerOutput;
-        this.resonanceCoilComponentId = resonanceCoilComponentId;
+        this.resonanceCoilIds = resonanceCoilIds != null ? new java.util.ArrayList<>(resonanceCoilIds) : new java.util.ArrayList<>();
         this.registeredByUuid = registeredByUuid;
     }
 
-    // ── Mutators ──────────────────────────────────────────────────────────────
+    public void setState(ReactorState s)                { this.state = s; }
+    public void setFuelRods(int n)                      { this.fuelRods = Math.max(0, n); }
+    public void setStartupTicksRemaining(int t)         { this.startupTicksRemaining = Math.max(0, t); }
+    public void setShutdownTicksRemaining(int t)        { this.shutdownTicksRemaining = Math.max(0, t); }
+    public void setLastFuelDrainMs(long ms)             { this.lastFuelDrainMs = ms; }
+    public void setLastFaultTaskMs(long ms)             { this.lastFaultTaskMs = ms; }
+    public void setCurrentPowerOutput(int p)            { this.currentPowerOutput = Math.max(0, Math.min(100, p)); }
+    public void addResonanceCoil(String id) { if (!resonanceCoilIds.contains(id)) resonanceCoilIds.add(id); }
+    public void removeResonanceCoil(String id) { resonanceCoilIds.remove(id); }
 
-    public void setState(ReactorState state) { this.state = state; }
-    public void setFuelRods(int fuelRods) { this.fuelRods = Math.max(0, fuelRods); }
-    public void setStartupTicksRemaining(int ticks) { this.startupTicksRemaining = Math.max(0, ticks); }
-    public void setShutdownTicksRemaining(int ticks) { this.shutdownTicksRemaining = Math.max(0, ticks); }
-    public void setLastFuelDrainMs(long ms) { this.lastFuelDrainMs = ms; }
-    public void setLastFaultTaskMs(long ms) { this.lastFaultTaskMs = ms; }
-    public void setCurrentPowerOutput(int power) { this.currentPowerOutput = Math.max(0, Math.min(100, power)); }
-    public void setResonanceCoilComponentId(String id) { this.resonanceCoilComponentId = id; }
-
-    // ── Accessors ─────────────────────────────────────────────────────────────
-
-    public String getWorldKey() { return worldKey; }
-    public long getBlockPosLong() { return blockPosLong; }
-    public ReactorState getState() { return state; }
-    public int getFuelRods() { return fuelRods; }
-    public int getStartupTicksRemaining() { return startupTicksRemaining; }
-    public int getShutdownTicksRemaining() { return shutdownTicksRemaining; }
-    public long getLastFuelDrainMs() { return lastFuelDrainMs; }
-    public long getLastFaultTaskMs() { return lastFaultTaskMs; }
-    public int getCurrentPowerOutput() { return currentPowerOutput; }
-    public String getResonanceCoilComponentId() { return resonanceCoilComponentId; }
-    public UUID getRegisteredByUuid() { return registeredByUuid; }
+    public String getEntryId()                  { return entryId; }
+    public String getWorldKey()                 { return worldKey; }
+    public long getBlockPosLong()               { return blockPosLong; }
+    public ReactorState getState()              { return state; }
+    public int getFuelRods()                    { return fuelRods; }
+    public int getStartupTicksRemaining()       { return startupTicksRemaining; }
+    public int getShutdownTicksRemaining()      { return shutdownTicksRemaining; }
+    public long getLastFuelDrainMs()            { return lastFuelDrainMs; }
+    public long getLastFaultTaskMs()            { return lastFaultTaskMs; }
+    public int getCurrentPowerOutput()          { return currentPowerOutput; }
+    public java.util.List<String> getResonanceCoilIds() { return java.util.Collections.unmodifiableList(resonanceCoilIds); }
+    public UUID getRegisteredByUuid()           { return registeredByUuid; }
 }

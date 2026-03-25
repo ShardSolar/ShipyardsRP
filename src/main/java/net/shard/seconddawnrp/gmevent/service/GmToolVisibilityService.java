@@ -52,23 +52,23 @@ public class GmToolVisibilityService {
 
         if (newStack.isOf(ModItems.COMPONENT_REGISTRATION_TOOL)) {
             sendPositions(player, worldKey, playerPos,
-                    getComponentPositions(worldKey, playerPos), COL_AMBER);
+                    getComponentPositions(worldKey, playerPos), COL_AMBER, "component");
 
         } else if (newStack.isOf(ModItems.ENVIRONMENTAL_EFFECT_TOOL)) {
             sendPositions(player, worldKey, playerPos,
-                    getEnvPositions(worldKey, playerPos), COL_GREEN);
+                    getEnvPositions(worldKey, playerPos), COL_GREEN, "env");
 
         } else if (newStack.isOf(ModItems.TRIGGER_TOOL)) {
             sendPositions(player, worldKey, playerPos,
-                    getTriggerPositions(worldKey, playerPos), COL_YELLOW);
+                    getTriggerPositions(worldKey, playerPos), COL_YELLOW, "trigger");
 
         } else if (newStack.isOf(ModItems.ANOMALY_MARKER_TOOL)) {
             sendPositions(player, worldKey, playerPos,
-                    getAnomalyPositions(worldKey, playerPos), COL_PURPLE);
+                    getAnomalyPositions(worldKey, playerPos), COL_PURPLE, "anomaly");
 
         } else if (newStack.isOf(ModItems.WARP_CORE_TOOL)) {
             sendPositions(player, worldKey, playerPos,
-                    getWarpCorePositions(worldKey, playerPos), COL_CYAN);
+                    getWarpCorePositions(worldKey, playerPos), COL_CYAN, "warpcore");
 
         } else {
             // Unequipped a tool or switched to something else — clear
@@ -131,9 +131,9 @@ public class GmToolVisibilityService {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static void sendPositions(ServerPlayerEntity player, String worldKey,
-                                      BlockPos playerPos, List<Long> positions, int colour) {
+                                      BlockPos playerPos, List<Long> positions, int colour, String toolType) {
         ServerPlayNetworking.send(player,
-                new ToolVisibilityS2CPacket(positions, colour, worldKey));
+                new ToolVisibilityS2CPacket(positions, colour, worldKey, toolType));
     }
 
     private static boolean isGM(ServerPlayerEntity player) {

@@ -54,7 +54,10 @@ public class WarpCoreConfigRepository {
                     getInt(obj, "powerOutputOffline", 0),
                     getDouble(obj, "criticalDegradationMultiplier", 2.0),
                     getLong(obj, "faultTaskCooldownMs", 30 * 60 * 1000L),
-                    getInt(obj, "maxFuelRods", 64)
+                    getInt(obj, "maxFuelRods", 64),
+                    getLong(obj, "maxEnergyOutputPerTick", 2048L),
+                    getLong(obj, "energyBufferSize", 20480L),
+                    getLong(obj, "startupMinGeneratorEnergy", 1000L)
             );
         } catch (IOException e) {
             throw new RuntimeException("Failed to load " + FILE_NAME, e);
@@ -79,6 +82,9 @@ public class WarpCoreConfigRepository {
         obj.addProperty("criticalDegradationMultiplier", c.getCriticalDegradationMultiplier());
         obj.addProperty("faultTaskCooldownMs", c.getFaultTaskCooldownMs());
         obj.addProperty("maxFuelRods", c.getMaxFuelRods());
+        obj.addProperty("maxEnergyOutputPerTick", c.getMaxEnergyOutputPerTick());
+        obj.addProperty("energyBufferSize", c.getEnergyBufferSize());
+        obj.addProperty("startupMinGeneratorEnergy", c.getStartupMinGeneratorEnergy());
         try (Writer w = Files.newBufferedWriter(filePath)) {
             GSON.toJson(obj, w);
         }

@@ -23,6 +23,17 @@ repositories {
         filter {
             includeGroup "maven.modrinth"
         }
+
+        // Team Reborn Energy API (TREnergy)
+        maven {
+            name = "TechReborn"
+            url = "https://maven.terraformersmc.com/"
+        }
+        // Fallback if above doesn't have it
+        maven {
+            name = "FabricMC"
+            url = "https://maven.fabricmc.net/"
+        }
     }
 }
 
@@ -38,8 +49,10 @@ dependencies {
     modLocalRuntime "maven.modrinth:luckperms:v5.4.140-fabric"
     implementation "org.xerial:sqlite-jdbc:3.45.3.0"
     include "org.xerial:sqlite-jdbc:3.45.3.0"
+    include modApi("teamreborn:energy:4.1.0")
 
 }
+
 
 fabricApi {
     configureDataGeneration() {

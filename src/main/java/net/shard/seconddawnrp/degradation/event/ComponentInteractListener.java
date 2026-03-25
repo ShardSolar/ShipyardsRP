@@ -45,11 +45,35 @@ public class ComponentInteractListener {
             ComponentEntry entry = opt.get();
             ItemStack held = serverPlayer.getMainHandStack();
 
+            // OFFLINE — block all normal interactions except repair attempt and PAD inspect
+            if (entry.getStatus() == ComponentStatus.OFFLINE) {
+                if (serverPlayer.isSneaking()) {
+                    // Allow repair attempt even when OFFLINE
+                    return handleRepair(serverPlayer, worldKey, posLong, entry, held);
+                } else if (held.isOf(ModItems.ENGINEERING_PAD)) {
+                    handleInspect(serverPlayer, entry);
+                    return ActionResult.SUCCESS;
+                } else {
+                    // Block the interaction — component is non-functional
+                    serverPlayer.sendMessage(
+                            Text.literal("⚠ " + entry.getDisplayName()
+                                            + " is OFFLINE — component non-functional.")
+                                    .formatted(Formatting.DARK_RED), true);
+                    return ActionResult.FAIL;
+                }
+            }
+
             if (serverPlayer.isSneaking()) {
                 // Sneak + right-click — attempt repair with held item
                 return handleRepair(serverPlayer, worldKey, posLong, entry, held);
             } else if (held.isOf(ModItems.ENGINEERING_PAD)) {
-                // Plain right-click with PAD — inspect
+                // If this block is also a registered warp core controller,
+                // defer to WarpCoreControllerBlock.onUse() for focused pad view
+                if (net.shard.seconddawnrp.SecondDawnRP.WARP_CORE_SERVICE
+                        .getByPosition(worldKey, posLong).isPresent()) {
+                    return ActionResult.PASS;
+                }
+                // Plain right-click with PAD — inspect component
                 handleInspect(serverPlayer, entry);
                 return ActionResult.SUCCESS;
             }

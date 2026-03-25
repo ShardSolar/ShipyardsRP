@@ -111,6 +111,13 @@ public final class EngineeringCommands {
         engineering.then(CommandManager.literal("save")
                 .executes(ctx -> executeSave(ctx.getSource())));
 
+        // /engineering locate <id> — sends beacon particles to guide player
+        engineering.then(CommandManager.literal("locate")
+                .then(CommandManager.argument("id", StringArgumentType.word())
+                        .suggests(COMPONENT_ID_SUGGESTIONS)
+                        .executes(ctx -> executeLocate(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "id")))));
+
         dispatcher.register(engineering);
     }
 
@@ -298,6 +305,31 @@ public final class EngineeringCommands {
         SecondDawnRP.DEGRADATION_SERVICE.saveAll();
         source.sendFeedback(() ->
                 Text.literal("Degradation state saved.").formatted(Formatting.GREEN), false);
+        return 1;
+    }
+
+    private static int executeLocate(ServerCommandSource source, String componentId) {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) { source.sendError(Text.literal("Must be a player.")); return 0; }
+
+        var opt = SecondDawnRP.DEGRADATION_SERVICE.getById(componentId);
+        if (opt.isEmpty()) {
+            source.sendError(Text.literal("Unknown component: " + componentId));
+            return 0;
+        }
+        var entry = opt.get();
+        net.minecraft.util.math.BlockPos target =
+                net.minecraft.util.math.BlockPos.fromLong(entry.getBlockPosLong());
+
+        source.sendFeedback(() -> Text.literal("Component '" + entry.getDisplayName()
+                + "' is at " + target.getX() + ", " + target.getY() + ", " + target.getZ()
+                + " in " + entry.getWorldKey()).formatted(Formatting.GOLD), false);
+
+        // Send packet directly to the player — client spawns particles regardless of distance
+        net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(player,
+                new net.shard.seconddawnrp.degradation.network.LocateComponentS2CPacket(
+                        entry.getDisplayName(),
+                        target.getX() + 0.5, target.getY(), target.getZ() + 0.5));
         return 1;
     }
 

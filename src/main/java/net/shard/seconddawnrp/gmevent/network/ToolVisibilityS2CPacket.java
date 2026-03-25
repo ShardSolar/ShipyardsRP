@@ -11,18 +11,19 @@ import java.util.List;
 
 /**
  * Sent server → client when a GM equips or unequips a registration tool.
- *
- * <p>Carries a list of block positions (as longs) and a colour (ARGB int)
- * for the particle column to render. An empty positions list means
- * clear all active columns (tool was unequipped).
- *
- * <p>The client renders a particle column at each position while the
- * packet is active. A new packet from the server replaces the previous one.
+ * toolType drives particle selection on the client:
+ *   "component"  → FLAME (amber)
+ *   "env"        → SOUL_FIRE_FLAME (blue-green)
+ *   "trigger"    → WITCH (yellow)
+ *   "anomaly"    → END_ROD (white/purple)
+ *   "warpcore"   → SOUL_FIRE_FLAME (cyan)
+ *   ""           → clear
  */
 public record ToolVisibilityS2CPacket(
         List<Long> blockPositions,
-        int particleColour,     // ARGB — used for dust particles
-        String worldKey         // only render in this world
+        int particleColour,
+        String worldKey,
+        String toolType
 ) implements CustomPayload {
 
     public static final Id<ToolVisibilityS2CPacket> ID =
@@ -35,22 +36,23 @@ public record ToolVisibilityS2CPacket(
                         for (long pos : value.blockPositions()) buf.writeLong(pos);
                         buf.writeInt(value.particleColour());
                         buf.writeString(value.worldKey());
+                        buf.writeString(value.toolType());
                     },
                     buf -> {
                         int count = buf.readInt();
                         List<Long> positions = new ArrayList<>(count);
                         for (int i = 0; i < count; i++) positions.add(buf.readLong());
-                        int colour = buf.readInt();
-                        String worldKey = buf.readString();
-                        return new ToolVisibilityS2CPacket(positions, colour, worldKey);
+                        int colour   = buf.readInt();
+                        String world = buf.readString();
+                        String tool  = buf.readString();
+                        return new ToolVisibilityS2CPacket(positions, colour, world, tool);
                     }
             );
 
     @Override
     public Id<? extends CustomPayload> getId() { return ID; }
 
-    /** Empty packet — clears all columns on the client. */
     public static ToolVisibilityS2CPacket clear() {
-        return new ToolVisibilityS2CPacket(List.of(), 0, "");
+        return new ToolVisibilityS2CPacket(List.of(), 0, "", "");
     }
 }

@@ -9,41 +9,36 @@ import net.minecraft.util.math.BlockPos;
 import net.shard.seconddawnrp.SecondDawnRP;
 import net.shard.seconddawnrp.degradation.data.ComponentEntry;
 import net.shard.seconddawnrp.division.Division;
-import net.shard.seconddawnrp.tasksystem.data.OpsTaskStatus;
 import net.shard.seconddawnrp.tasksystem.data.TaskObjectiveType;
 import net.shard.seconddawnrp.warpcore.adapter.PowerSourceAdapter;
 import net.shard.seconddawnrp.warpcore.adapter.StandalonePowerAdapter;
+import net.shard.seconddawnrp.warpcore.adapter.TRenergyPowerAdapter;
 import net.shard.seconddawnrp.warpcore.data.FaultType;
 import net.shard.seconddawnrp.warpcore.data.ReactorState;
 import net.shard.seconddawnrp.warpcore.data.WarpCoreConfig;
 import net.shard.seconddawnrp.warpcore.data.WarpCoreEntry;
 import net.shard.seconddawnrp.warpcore.repository.WarpCoreRepository;
 
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 
 /**
- * Core service for the warp core system.
+ * Core service for the warp core system. Supports multiple registered cores.
  *
- * <p>Responsibilities:
- * <ul>
- *   <li>Reactor state machine — OFFLINE → STARTING → ONLINE → UNSTABLE → CRITICAL → FAILED
- *   <li>Startup / shutdown sequences with tick countdown
- *   <li>Fuel consumption — base real-time drain + output-scaled bonus drain
- *   <li>Resonance coil health monitoring via degradation system
- *   <li>Fault detection and task auto-generation
- *   <li>Power output reporting (fed to ShipState stub in Phase 12)
- *   <li>Degradation multiplier injection — CRITICAL state accelerates component drain
- * </ul>
+ * <p>Each core is identified by its {@code entryId}. Commands targeting a
+ * specific core take the entryId as an argument. When only one core is
+ * registered, commands that omit the ID default to that core.
  */
 public class WarpCoreService {
 
     private final WarpCoreRepository repository;
     private final WarpCoreConfig config;
-
-    private WarpCoreEntry entry;
-    private PowerSourceAdapter adapter;
     private MinecraftServer server;
+
+    /** All registered warp cores, keyed by entryId. */
+    private final Map<String, WarpCoreEntry> entries = new LinkedHashMap<>();
+
+    /** Per-core power adapters, keyed by entryId. */
+    private final Map<String, PowerSourceAdapter> adapters = new HashMap<>();
 
     public WarpCoreService(WarpCoreRepository repository, WarpCoreConfig config) {
         this.repository = repository;
@@ -54,400 +49,480 @@ public class WarpCoreService {
 
     public void setServer(MinecraftServer server) {
         this.server = server;
+        // Rebuild all adapters now that worlds are available
+        for (WarpCoreEntry e : entries.values()) {
+            adapters.put(e.getEntryId(), buildAdapter(e));
+        }
     }
 
     public void reload() {
-        Optional<WarpCoreEntry> loaded = repository.load();
-        if (loaded.isPresent()) {
-            this.entry = loaded.get();
-            // Rebuild adapter from loaded entry
-            this.adapter = new StandalonePowerAdapter(entry, config);
-            System.out.println("[SecondDawnRP] Warp core loaded — state: " + entry.getState()
-                    + ", fuel: " + entry.getFuelRods());
+        entries.clear();
+        adapters.clear();
+        for (WarpCoreEntry e : repository.loadAll()) {
+            entries.put(e.getEntryId(), e);
+            adapters.put(e.getEntryId(), buildAdapter(e));
+        }
+        if (entries.isEmpty()) {
+            System.out.println("[SecondDawnRP] No warp cores registered.");
         } else {
-            this.entry = null;
-            this.adapter = null;
-            System.out.println("[SecondDawnRP] No warp core registered.");
+            System.out.println("[SecondDawnRP] Loaded " + entries.size() + " warp core(s).");
         }
     }
 
     public void save() {
-        if (entry != null) repository.save(entry);
+        repository.saveAll(entries.values());
+    }
+
+    private PowerSourceAdapter buildAdapter(WarpCoreEntry e) {
+        if (server != null) {
+            // Try TREnergy from the controller block's own faces (cable enforcement)
+            ServerWorld world = resolveWorld(e.getWorldKey());
+            if (world != null) {
+                BlockPos pos = BlockPos.fromLong(e.getBlockPosLong());
+                TRenergyPowerAdapter tr = new TRenergyPowerAdapter(world, pos);
+                if (tr.getStoredEnergy() > 0 || tr.getMaxCapacity() > 0) {
+                    System.out.println("[SecondDawnRP] Warp core " + e.getEntryId()
+                            + " using TREnergy via connected cables.");
+                    return tr;
+                }
+                // No cable connected — return TR adapter anyway (will return 0 until cable attached)
+                return tr;
+            }
+        }
+        return new StandalonePowerAdapter(e, config);
     }
 
     // ── Server Tick ───────────────────────────────────────────────────────────
 
     public void tick(MinecraftServer server) {
-        if (entry == null) return;
-
+        if (entries.isEmpty()) return;
         long now = System.currentTimeMillis();
+        for (WarpCoreEntry entry : new ArrayList<>(entries.values())) {
+            // Warp core is output-only — always use standalone adapter (fuel rods)
+            // Never auto-switch to TREnergy during normal operation
+            PowerSourceAdapter adapter = adapters.get(entry.getEntryId());
+            if (!(adapter instanceof StandalonePowerAdapter)) {
+                adapter = new StandalonePowerAdapter(entry, config);
+                adapters.put(entry.getEntryId(), adapter);
+            }
 
-        // Update coil health from degradation system
-        updateCoilHealth();
+            if (adapter instanceof StandalonePowerAdapter sa) {
+                int health = getCoilHealth(entry);
+                sa.updateCoilHealth(health < 0 ? 100 : health);
+            }
 
-        // Tick state machine
-        switch (entry.getState()) {
-            case STARTING  -> tickStarting(now);
-            case ONLINE    -> tickOnline(now);
-            case UNSTABLE  -> tickUnstable(now);
-            case CRITICAL  -> tickCritical(now);
-            case FAILED    -> {} // wait for manual reset
-            case OFFLINE   -> {} // idle
-        }
+            // Fill energy output buffer based on reactor state
+            fillEnergyBuffer(entry, server);
 
-        // Update power output on adapter
-        if (adapter instanceof StandalonePowerAdapter sa) {
-            int coilHealth = getCoilHealth();
-            sa.updateCoilHealth(coilHealth);
+            switch (entry.getState()) {
+                case STARTING -> tickStarting(entry, adapter, now);
+                case ONLINE   -> tickOnline(entry, adapter, now);
+                case UNSTABLE -> tickUnstable(entry, adapter, now);
+                case CRITICAL -> tickCritical(entry, adapter, now);
+                case FAILED, OFFLINE -> {}
+            }
         }
     }
 
-    private void tickStarting(long now) {
-        int remaining = entry.getStartupTicksRemaining();
-        if (remaining > 0) {
-            entry.setStartupTicksRemaining(remaining - 1);
-            return;
+    /** Public refresh — called when a player opens the monitor. Always returns standalone adapter. */
+    public void refreshAdapterForEntry(WarpCoreEntry entry) {
+        // Warp core is output-only — always standalone (fuel rods)
+        adapters.put(entry.getEntryId(), new StandalonePowerAdapter(entry, config));
+    }
+
+    /** Re-evaluates adapter type each tick — switches to TREnergy when cables are connected. */
+    private PowerSourceAdapter refreshAdapter(WarpCoreEntry entry, PowerSourceAdapter current) {
+        if (server == null) return current;
+        ServerWorld world = resolveWorld(entry.getWorldKey());
+        if (world == null) return current;
+        BlockPos pos = BlockPos.fromLong(entry.getBlockPosLong());
+
+        boolean hasTREnergy = false;
+        try {
+            for (net.minecraft.util.math.Direction dir : net.minecraft.util.math.Direction.values()) {
+                // Query adjacent block's face pointing back at the controller
+                net.minecraft.util.math.BlockPos adjacent = pos.offset(dir);
+                if (team.reborn.energy.api.EnergyStorage.SIDED.find(world, adjacent, dir.getOpposite()) != null) {
+                    hasTREnergy = true;
+                    break;
+                }
+            }
+        } catch (Throwable t) {
+            return current;
         }
 
-        // Startup sequence complete — validate conditions
-        int coilHealth = getCoilHealth();
-        if (coilHealth < config.getCoilStartupMinimumHealth()) {
-            triggerFault(FaultType.STARTUP_FAILURE,
-                    "Startup failed — resonance coil health too low (" + coilHealth + "/100).");
+        if (hasTREnergy && !(current instanceof TRenergyPowerAdapter)) {
+            System.out.println("[SecondDawnRP] Warp core " + entry.getEntryId()
+                    + " — cable connected, switching to TREnergy adapter.");
+            TRenergyPowerAdapter newAdapter = new TRenergyPowerAdapter(world, pos);
+            // Update entry display immediately so next monitor open shows correct data
+            entry.setCurrentPowerOutput(newAdapter.getPowerOutput());
+            return newAdapter;
+        }
+        if (!hasTREnergy && current instanceof TRenergyPowerAdapter) {
+            System.out.println("[SecondDawnRP] Warp core " + entry.getEntryId()
+                    + " — cable disconnected, falling back to standalone adapter.");
+            return new StandalonePowerAdapter(entry, config);
+        }
+        return current;
+    }
+
+    private void tickStarting(WarpCoreEntry entry, PowerSourceAdapter adapter, long now) {
+        int remaining = entry.getStartupTicksRemaining();
+        if (remaining > 0) { entry.setStartupTicksRemaining(remaining - 1); return; }
+        int coilHealth = getCoilHealth(entry);
+        if (coilHealth >= 0 && coilHealth < config.getCoilStartupMinimumHealth()) {
+            triggerFault(entry, FaultType.STARTUP_FAILURE,
+                    "Resonance coil health too low (" + coilHealth + "/100).");
             return;
         }
         if (entry.getFuelRods() <= config.getFuelCriticalThreshold()) {
-            triggerFault(FaultType.FUEL_DEPLETED,
-                    "Startup failed — insufficient fuel rods.");
+            triggerFault(entry, FaultType.FUEL_DEPLETED, "Insufficient fuel rods.");
             return;
         }
-
-        transitionTo(ReactorState.ONLINE);
+        // Startup assist check — require generator energy on an adjacent face
+        long minGen = config.getStartupMinGeneratorEnergy();
+        if (minGen > 0 && !hasAdjacentGeneratorEnergy(entry, minGen)) {
+            if (server != null) {
+                net.minecraft.text.Text warn = net.minecraft.text.Text.literal(
+                                "[Warp Core] " + entry.getEntryId() + " — startup requires generator power on adjacent face (" + minGen + " E minimum).")
+                        .formatted(net.minecraft.util.Formatting.YELLOW);
+                broadcastEngineering(warn);
+            }
+            // Don't fault — just wait for generator to connect
+            entry.setStartupTicksRemaining(20); // retry in 1 second
+            return;
+        }
+        transitionTo(entry, ReactorState.ONLINE);
         entry.setCurrentPowerOutput(config.getPowerOutputNominal());
-        broadcastAll(Text.literal("[Warp Core] Reactor online. Power output nominal.")
-                .formatted(Formatting.GREEN));
-        repository.save(entry);
+        broadcastAll(Text.literal("[Warp Core] " + entry.getEntryId()
+                + " — reactor online. Power output nominal.").formatted(Formatting.GREEN));
+        repository.saveAll(entries.values());
     }
 
-    private void tickOnline(long now) {
-        tickFuelDrain(now);
+    private void tickOnline(WarpCoreEntry entry, PowerSourceAdapter adapter, long now) {
+        if (adapter instanceof StandalonePowerAdapter) tickFuelDrain(entry, now);
 
-        int coilHealth = getCoilHealth();
+        int coilHealth = getCoilHealth(entry);
         int fuel = entry.getFuelRods();
+        boolean fuelLow = adapter instanceof StandalonePowerAdapter
+                && fuel <= config.getFuelCriticalThreshold();
+        boolean coilLow = coilHealth >= 0 && coilHealth < config.getCoilInstabilityThreshold();
 
-        // Check for instability conditions
-        if (fuel <= config.getFuelCriticalThreshold()
-                || coilHealth < config.getCoilInstabilityThreshold()) {
-            transitionTo(ReactorState.UNSTABLE);
+        if (fuelLow || coilLow) {
+            transitionTo(entry, ReactorState.UNSTABLE);
             entry.setCurrentPowerOutput(config.getPowerOutputUnstable());
-            broadcastEngineering(Text.literal("[Warp Core] WARNING — reactor destabilising.")
-                    .formatted(Formatting.YELLOW));
-            maybeGenerateFaultTask(
-                    fuel <= config.getFuelCriticalThreshold()
-                            ? FaultType.FUEL_DEPLETED : FaultType.COIL_DEGRADED, now);
-            repository.save(entry);
-        } else if (fuel <= config.getFuelWarningThreshold()
-                || coilHealth < config.getCoilInstabilityThreshold() + 10) {
-            // Warning only — still ONLINE
-            broadcastEngineering(Text.literal("[Warp Core] Caution — fuel or coil approaching warning threshold.")
-                    .formatted(Formatting.YELLOW));
+            broadcastEngineering(Text.literal("[Warp Core] " + entry.getEntryId()
+                    + " — WARNING: reactor destabilising.").formatted(Formatting.YELLOW));
+            maybeGenerateFaultTask(entry, fuelLow ? FaultType.FUEL_DEPLETED : FaultType.COIL_DEGRADED, now);
+            repository.saveAll(entries.values());
         }
     }
 
-    private void tickUnstable(long now) {
-        tickFuelDrain(now);
+    private void tickUnstable(WarpCoreEntry entry, PowerSourceAdapter adapter, long now) {
+        if (adapter instanceof StandalonePowerAdapter) tickFuelDrain(entry, now);
 
-        int coilHealth = getCoilHealth();
+        int coilHealth = getCoilHealth(entry);
         int fuel = entry.getFuelRods();
+        boolean fuelOut = adapter instanceof StandalonePowerAdapter
+                && fuel <= 0;
+        boolean coilDead = coilHealth == 0;
 
-        if (fuel <= 0) {
-            triggerFault(FaultType.FUEL_DEPLETED, "Fuel exhausted.");
-            return;
-        }
-        if (coilHealth <= 0) {
-            triggerFault(FaultType.COIL_DEGRADED, "Resonance coil failed.");
-            return;
-        }
-
-        // If conditions recover, return to ONLINE
-        if (fuel > config.getFuelCriticalThreshold()
-                && coilHealth >= config.getCoilInstabilityThreshold()) {
-            transitionTo(ReactorState.ONLINE);
-            entry.setCurrentPowerOutput(config.getPowerOutputNominal());
-            broadcastEngineering(Text.literal("[Warp Core] Reactor stabilised.")
-                    .formatted(Formatting.GREEN));
-            repository.save(entry);
+        if (fuelOut || coilDead) {
+            triggerFault(entry, fuelOut ? FaultType.FUEL_DEPLETED : FaultType.COIL_DEGRADED,
+                    fuelOut ? "Fuel rods depleted." : "Resonance coil offline.");
         }
     }
 
-    private void tickCritical(long now) {
-        tickFuelDrain(now);
-
-        if (entry.getFuelRods() <= 0 || getCoilHealth() <= 0) {
-            triggerFault(FaultType.CASCADING_FAILURE, "Cascading failure.");
+    private void tickCritical(WarpCoreEntry entry, PowerSourceAdapter adapter, long now) {
+        // CRITICAL slowly escalates to FAILED unless addressed
+        if (entry.getLastFaultTaskMs() > 0
+                && System.currentTimeMillis() - entry.getLastFaultTaskMs()
+                > config.getFaultTaskCooldownMs() * 3) {
+            triggerFault(entry, FaultType.CASCADING_FAILURE, "Critical fault unresolved.");
         }
     }
 
-    private void tickFuelDrain(long now) {
+    private void tickFuelDrain(WarpCoreEntry entry, long now) {
         long elapsed = now - entry.getLastFuelDrainMs();
         if (elapsed < config.getFuelDrainIntervalMs()) return;
-
         int drain = config.getFuelDrainPerTickBase()
-                + (entry.getCurrentPowerOutput() * config.getFuelDrainOutputScale() / 100);
-        drain = Math.max(1, drain);
-
+                + (int) Math.ceil(entry.getCurrentPowerOutput() * config.getFuelDrainOutputScale() / 100.0);
         entry.setFuelRods(entry.getFuelRods() - drain);
         entry.setLastFuelDrainMs(now);
-        repository.save(entry);
+        repository.saveAll(entries.values());
     }
 
-    // ── State Transitions ─────────────────────────────────────────────────────
+    // ── Commands ──────────────────────────────────────────────────────────────
 
-    /**
-     * Initiate startup sequence. Validates permissions and conditions.
-     *
-     * @return true if startup was initiated, false with reason sent to player
-     */
-    public boolean initiateStartup(ServerPlayerEntity player) {
-        if (entry == null) {
-            player.sendMessage(Text.literal("No warp core registered.").formatted(Formatting.RED), false);
-            return false;
-        }
-        if (!entry.getState().canStartup()) {
-            player.sendMessage(Text.literal("Cannot start reactor from state: "
-                    + entry.getState().name()).formatted(Formatting.RED), false);
+    public boolean initiateStartup(String entryId, ServerPlayerEntity player) {
+        WarpCoreEntry entry = entries.get(entryId);
+        if (entry == null) { player.sendMessage(Text.literal("Unknown core: " + entryId).formatted(Formatting.RED), false); return false; }
+        if (entry.getState() != ReactorState.OFFLINE) {
+            player.sendMessage(Text.literal("Core is not OFFLINE (state: " + entry.getState() + ").").formatted(Formatting.RED), false);
             return false;
         }
         if (!hasReactorPermission(player)) {
-            player.sendMessage(Text.literal("You do not have the engineering.reactor certification.")
-                    .formatted(Formatting.RED), false);
+            player.sendMessage(Text.literal("Requires engineering.reactor certification.").formatted(Formatting.RED), false);
             return false;
         }
-
-        int coilHealth = getCoilHealth();
-        if (coilHealth < config.getCoilStartupMinimumHealth()) {
-            player.sendMessage(
-                    Text.literal("Startup blocked — resonance coil health too low ("
-                                    + coilHealth + "/100, minimum " + config.getCoilStartupMinimumHealth() + ").")
-                            .formatted(Formatting.RED), false);
-            return false;
-        }
-        if (entry.getFuelRods() <= config.getFuelCriticalThreshold()) {
-            player.sendMessage(
-                    Text.literal("Startup blocked — insufficient fuel rods ("
-                                    + entry.getFuelRods() + " loaded, need >"
-                                    + config.getFuelCriticalThreshold() + ").")
-                            .formatted(Formatting.RED), false);
-            return false;
-        }
-
-        transitionTo(ReactorState.STARTING);
+        transitionTo(entry, ReactorState.STARTING);
         entry.setStartupTicksRemaining(config.getStartupDurationTicks());
-        repository.save(entry);
-
-        broadcastEngineering(Text.literal("[Warp Core] Startup sequence initiated by "
-                        + player.getName().getString() + ". Stand by.")
-                .formatted(Formatting.AQUA));
+        repository.saveAll(entries.values());
+        broadcastEngineering(Text.literal("[Warp Core] " + entryId + " — startup initiated by "
+                + player.getName().getString() + ".").formatted(Formatting.AQUA));
         return true;
     }
 
-    /**
-     * Initiate shutdown sequence.
-     */
-    public boolean initiateShutdown(ServerPlayerEntity player) {
-        if (entry == null) {
-            player.sendMessage(Text.literal("No warp core registered.").formatted(Formatting.RED), false);
-            return false;
-        }
-        if (!entry.getState().canShutdown()) {
-            player.sendMessage(Text.literal("Cannot shut down reactor from state: "
-                    + entry.getState().name()).formatted(Formatting.RED), false);
+    public boolean initiateShutdown(String entryId, ServerPlayerEntity player) {
+        WarpCoreEntry entry = entries.get(entryId);
+        if (entry == null) { player.sendMessage(Text.literal("Unknown core: " + entryId).formatted(Formatting.RED), false); return false; }
+        if (entry.getState() == ReactorState.OFFLINE || entry.getState() == ReactorState.FAILED) {
+            player.sendMessage(Text.literal("Core is already " + entry.getState() + ".").formatted(Formatting.RED), false);
             return false;
         }
         if (!hasReactorPermission(player)) {
-            player.sendMessage(Text.literal("You do not have the engineering.reactor certification.")
-                    .formatted(Formatting.RED), false);
+            player.sendMessage(Text.literal("Requires engineering.reactor certification.").formatted(Formatting.RED), false);
             return false;
         }
-
-        transitionTo(ReactorState.OFFLINE);
+        transitionTo(entry, ReactorState.OFFLINE);
         entry.setCurrentPowerOutput(config.getPowerOutputOffline());
-        repository.save(entry);
-
-        broadcastEngineering(Text.literal("[Warp Core] Reactor shutdown initiated by "
-                        + player.getName().getString() + ".")
-                .formatted(Formatting.YELLOW));
+        repository.saveAll(entries.values());
+        broadcastEngineering(Text.literal("[Warp Core] " + entryId + " — shutdown initiated by "
+                + player.getName().getString() + ".").formatted(Formatting.YELLOW));
         return true;
     }
 
-    /**
-     * Manually inject a fault — GM use only.
-     */
-    public void injectFault(FaultType type, String reason) {
-        triggerFault(type, reason);
-    }
-
-    /**
-     * Reset from FAILED to OFFLINE — requires st.engineering.admin or GM.
-     */
-    public boolean resetFromFailed(ServerPlayerEntity player) {
-        if (entry == null || entry.getState() != ReactorState.FAILED) {
-            player.sendMessage(Text.literal("Reactor is not in FAILED state.").formatted(Formatting.RED), false);
+    public boolean resetFromFailed(String entryId, ServerPlayerEntity player) {
+        WarpCoreEntry entry = entries.get(entryId);
+        if (entry == null) { player.sendMessage(Text.literal("Unknown core: " + entryId).formatted(Formatting.RED), false); return false; }
+        if (entry.getState() != ReactorState.FAILED && entry.getState() != ReactorState.CRITICAL) {
+            player.sendMessage(Text.literal("Core is not in a failed state.").formatted(Formatting.RED), false);
             return false;
         }
-        transitionTo(ReactorState.OFFLINE);
-        entry.setCurrentPowerOutput(0);
-        repository.save(entry);
-        broadcastEngineering(Text.literal("[Warp Core] Emergency reset performed by "
-                        + player.getName().getString() + ". Reactor offline.")
-                .formatted(Formatting.YELLOW));
+        if (!hasReactorPermission(player)) {
+            player.sendMessage(Text.literal("Requires engineering.reactor certification.").formatted(Formatting.RED), false);
+            return false;
+        }
+        transitionTo(entry, ReactorState.OFFLINE);
+        entry.setCurrentPowerOutput(config.getPowerOutputOffline());
+        repository.saveAll(entries.values());
+        broadcastEngineering(Text.literal("[Warp Core] " + entryId + " — reset by "
+                + player.getName().getString() + ". Reactor offline.").formatted(Formatting.YELLOW));
         return true;
     }
 
-    // ── Fuel Management ───────────────────────────────────────────────────────
-
-    /**
-     * Load fuel rods into the reactor.
-     *
-     * @param count number of rods to add
-     * @return how many were actually added (capped at max)
-     */
-    public int loadFuel(int count) {
+    public int loadFuel(String entryId, int count) {
+        WarpCoreEntry entry = entries.get(entryId);
         if (entry == null) return 0;
         int space = config.getMaxFuelRods() - entry.getFuelRods();
         int toAdd = Math.min(count, space);
-        entry.setFuelRods(entry.getFuelRods() + toAdd);
-        repository.save(entry);
+        if (toAdd > 0) {
+            entry.setFuelRods(entry.getFuelRods() + toAdd);
+            repository.saveAll(entries.values());
+        }
         return toAdd;
     }
 
-    // ── Resonance Coil Linking ────────────────────────────────────────────────
-
-    /**
-     * Link a registered degradation component as the resonance coil.
-     * The component must already exist in the degradation system.
-     */
-    public boolean linkResonanceCoil(String componentId) {
+    public boolean linkResonanceCoil(String entryId, String componentId) {
+        WarpCoreEntry entry = entries.get(entryId);
         if (entry == null) return false;
-        entry.setResonanceCoilComponentId(componentId);
-        repository.save(entry);
+        entry.addResonanceCoil(componentId);
+        repository.saveAll(entries.values());
         return true;
     }
 
-    // ── Registration ─────────────────────────────────────────────────────────
-
-    public boolean register(String worldKey, long blockPosLong, UUID registeredBy) {
-        if (entry != null) return false; // only one warp core
-        entry = new WarpCoreEntry(
-                worldKey, blockPosLong, ReactorState.OFFLINE,
-                0, System.currentTimeMillis(), 0L, 0, null, registeredBy);
-        adapter = new StandalonePowerAdapter(entry, config);
-        repository.save(entry);
-        System.out.println("[SecondDawnRP] Warp core registered at " + worldKey + ":" + blockPosLong);
+    public boolean unlinkResonanceCoil(String entryId, String componentId) {
+        WarpCoreEntry entry = entries.get(entryId);
+        if (entry == null) return false;
+        entry.removeResonanceCoil(componentId);
+        repository.saveAll(entries.values());
         return true;
     }
 
-    public void unregister() {
-        entry = null;
-        adapter = null;
-        repository.delete();
+    public boolean unlinkAllCoils(String entryId) {
+        WarpCoreEntry entry = entries.get(entryId);
+        if (entry == null) return false;
+        // Copy list before iterating to avoid ConcurrentModificationException
+        new java.util.ArrayList<>(entry.getResonanceCoilIds())
+                .forEach(entry::removeResonanceCoil);
+        repository.saveAll(entries.values());
+        return true;
+    }
+
+    public void injectFault(String entryId, FaultType type, String reason) {
+        WarpCoreEntry entry = entries.get(entryId);
+        if (entry != null) triggerFault(entry, type, reason);
+    }
+
+    // ── Registration ──────────────────────────────────────────────────────────
+
+    public WarpCoreEntry register(String worldKey, long blockPosLong, UUID registeredBy) {
+        // Check not already registered at this position
+        boolean exists = entries.values().stream()
+                .anyMatch(e -> e.getWorldKey().equals(worldKey) && e.getBlockPosLong() == blockPosLong);
+        if (exists) throw new IllegalStateException("Already registered at this position.");
+
+        String entryId = "wc_" + Long.toHexString(blockPosLong & 0xFFFFFFL)
+                + "_" + Long.toHexString(System.currentTimeMillis() & 0xFFFFL);
+        WarpCoreEntry entry = new WarpCoreEntry(entryId, worldKey, blockPosLong,
+                ReactorState.OFFLINE, 0, System.currentTimeMillis(), 0L, 0,
+                new java.util.ArrayList<>(), registeredBy);
+        entries.put(entryId, entry);
+        adapters.put(entryId, buildAdapter(entry));
+        repository.saveAll(entries.values());
+        System.out.println("[SecondDawnRP] Warp core registered: " + entryId + " at " + worldKey);
+        return entry;
+    }
+
+    public boolean unregister(String entryId) {
+        if (!entries.containsKey(entryId)) return false;
+        entries.remove(entryId);
+        adapters.remove(entryId);
+        repository.delete(entryId);
+        return true;
     }
 
     // ── Queries ───────────────────────────────────────────────────────────────
 
+    public Collection<WarpCoreEntry> getAll() { return entries.values(); }
+
+    public Optional<WarpCoreEntry> getById(String entryId) {
+        return Optional.ofNullable(entries.get(entryId));
+    }
+
+    public Optional<WarpCoreEntry> getByPosition(String worldKey, long blockPosLong) {
+        return entries.values().stream()
+                .filter(e -> e.getWorldKey().equals(worldKey) && e.getBlockPosLong() == blockPosLong)
+                .findFirst();
+    }
+
+    /** Returns the single entry if only one core is registered — for backward compat. */
     public Optional<WarpCoreEntry> getEntry() {
-        return Optional.ofNullable(entry);
+        if (entries.size() == 1) return Optional.of(entries.values().iterator().next());
+        return Optional.empty();
     }
 
-    public boolean isRegistered() {
-        return entry != null;
-    }
+    public boolean isRegistered() { return !entries.isEmpty(); }
 
-    /** Current power output — read by ShipState in Phase 12. */
     public int getPowerOutput() {
-        return entry != null ? entry.getCurrentPowerOutput() : 0;
+        return entries.values().stream()
+                .mapToInt(WarpCoreEntry::getCurrentPowerOutput)
+                .max().orElse(0);
     }
 
+    public PowerSourceAdapter getAdapter(String entryId) {
+        return adapters.get(entryId);
+    }
+
+    /** Returns adapter for the single registered core — backward compat. */
     public PowerSourceAdapter getAdapter() {
-        return adapter;
+        if (adapters.size() == 1) return adapters.values().iterator().next();
+        return null;
     }
 
-    public WarpCoreConfig getConfig() {
-        return config;
+    public WarpCoreConfig getConfig() { return config; }
+
+    /**
+     * Returns weighted coil health across all linked coils.
+     * Formula: (average * 0.7) + (worst * 0.3)
+     * Returns -1 if no coils are linked.
+     */
+    public int getCoilHealth(WarpCoreEntry entry) {
+        var ids = entry.getResonanceCoilIds();
+        if (ids.isEmpty()) return -1;
+        java.util.List<Integer> healths = new java.util.ArrayList<>();
+        for (String id : ids) {
+            SecondDawnRP.DEGRADATION_SERVICE.getById(id)
+                    .map(ComponentEntry::getHealth)
+                    .ifPresent(healths::add);
+        }
+        if (healths.isEmpty()) return -1;
+        double avg = healths.stream().mapToInt(i -> i).average().orElse(0);
+        int worst = healths.stream().mapToInt(i -> i).min().orElse(0);
+        return (int) Math.round(avg * 0.7 + worst * 0.3);
+    }
+
+    public int getCoilHealth() {
+        return getEntry().map(this::getCoilHealth).orElse(-1);
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 
-    private void triggerFault(FaultType type, String reason) {
-        ReactorState newState = type == FaultType.CASCADING_FAILURE
-                || type == FaultType.STARTUP_FAILURE ? ReactorState.FAILED : ReactorState.CRITICAL;
-
-        transitionTo(newState);
+    private void triggerFault(WarpCoreEntry entry, FaultType type, String reason) {
+        ReactorState newState = (type == FaultType.CASCADING_FAILURE || type == FaultType.STARTUP_FAILURE)
+                ? ReactorState.FAILED : ReactorState.CRITICAL;
+        transitionTo(entry, newState);
         entry.setCurrentPowerOutput(newState == ReactorState.FAILED
                 ? config.getPowerOutputOffline() : config.getPowerOutputCritical());
-        repository.save(entry);
-
+        repository.saveAll(entries.values());
         long now = System.currentTimeMillis();
-        maybeGenerateFaultTask(type, now);
-
-        String msg = "[Warp Core] FAULT: " + type.getDisplayName() + " — " + reason;
-        broadcastAll(Text.literal(msg).formatted(Formatting.RED));
+        maybeGenerateFaultTask(entry, type, now);
+        broadcastAll(Text.literal("[Warp Core] " + entry.getEntryId()
+                + " FAULT: " + type.getDisplayName() + " — " + reason).formatted(Formatting.RED));
     }
 
-    private void maybeGenerateFaultTask(FaultType type, long now) {
+    private void maybeGenerateFaultTask(WarpCoreEntry entry, FaultType type, long now) {
         if (now - entry.getLastFaultTaskMs() < config.getFaultTaskCooldownMs()) return;
-
         String displayName = "Warp Core Fault: " + type.getDisplayName();
         SecondDawnRP.TASK_SERVICE.createPoolTask(
                 "warpcore_fault_" + Long.toHexString(now & 0xFFFFFFL),
                 displayName,
-                type.getTaskDescription()
-                        + " [warpcore:" + entry.getWorldKey() + ":"
-                        + entry.getBlockPosLong() + "]",
-                Division.ENGINEERING,
-                TaskObjectiveType.MANUAL_CONFIRM,
-                "warpcore",
-                1,
-                75,
-                true,
-                null
-        );
+                type.getTaskDescription() + " [" + entry.getEntryId() + " at "
+                        + entry.getWorldKey() + ":" + entry.getBlockPosLong() + "]",
+                Division.ENGINEERING, TaskObjectiveType.MANUAL_CONFIRM,
+                "warpcore", 1, 75, true, null);
         entry.setLastFaultTaskMs(now);
-        System.out.println("[SecondDawnRP] Auto-generated warp core fault task: " + displayName);
     }
 
-    private void transitionTo(ReactorState newState) {
+    private void transitionTo(WarpCoreEntry entry, ReactorState newState) {
         ReactorState old = entry.getState();
         entry.setState(newState);
-        System.out.println("[SecondDawnRP] Warp core: " + old + " → " + newState);
-
-        // Notify degradation service of critical state for multiplier
+        System.out.println("[SecondDawnRP] WarpCore " + entry.getEntryId() + ": " + old + " → " + newState);
         if (newState == ReactorState.CRITICAL || newState == ReactorState.FAILED) {
-            SecondDawnRP.DEGRADATION_SERVICE.setReactorCritical(true,
-                    config.getCriticalDegradationMultiplier());
+            SecondDawnRP.DEGRADATION_SERVICE.setReactorCritical(true, config.getCriticalDegradationMultiplier());
         } else if (old == ReactorState.CRITICAL || old == ReactorState.FAILED) {
             SecondDawnRP.DEGRADATION_SERVICE.setReactorCritical(false, 1.0);
         }
     }
 
-    private int getCoilHealth() {
-        if (entry == null || entry.getResonanceCoilComponentId() == null) return 100;
-        return SecondDawnRP.DEGRADATION_SERVICE
-                .getById(entry.getResonanceCoilComponentId())
-                .map(ComponentEntry::getHealth)
-                .orElse(100);
-    }
+    /**
+     * Fills the controller block entity energy buffer each tick.
+     * Buffer is pulled by adjacent TR/EP cables automatically.
+     */
+    private void fillEnergyBuffer(WarpCoreEntry entry, MinecraftServer server) {
+        if (server == null) return;
+        int powerOutput = entry.getCurrentPowerOutput();
+        if (powerOutput <= 0) return;
 
-    private void updateCoilHealth() {
-        if (adapter instanceof StandalonePowerAdapter sa) {
-            sa.updateCoilHealth(getCoilHealth());
+        long maxOutput = config.getMaxEnergyOutputPerTick();
+        long toOutput = maxOutput * powerOutput / 100L;
+        if (toOutput <= 0) return;
+
+        for (net.minecraft.server.world.ServerWorld w : server.getWorlds()) {
+            if (!w.getRegistryKey().getValue().toString().equals(entry.getWorldKey())) continue;
+            net.minecraft.util.math.BlockPos pos = BlockPos.fromLong(entry.getBlockPosLong());
+
+            try (var transaction = net.fabricmc.fabric.api.transfer.v1.transaction.Transaction.openOuter()) {
+                for (net.minecraft.util.math.Direction dir : net.minecraft.util.math.Direction.values()) {
+                    net.minecraft.util.math.BlockPos adjacent = pos.offset(dir);
+                    var target = team.reborn.energy.api.EnergyStorage.SIDED.find(
+                            w, adjacent, dir.getOpposite());
+                    if (target == null || !target.supportsInsertion()) continue;
+                    target.insert(toOutput, transaction);
+                }
+                transaction.commit();
+            } catch (Throwable t) {
+                if (server.getTicks() % 200 == 0)
+                    System.out.println("[SecondDawnRP] Energy push error: " + t.getMessage());
+            }
+            break;
         }
     }
 
     private void broadcastAll(Text message) {
         if (server == null) return;
-        server.getPlayerManager().getPlayerList()
-                .forEach(p -> p.sendMessage(message, false));
+        server.getPlayerManager().getPlayerList().forEach(p -> p.sendMessage(message, false));
     }
 
     private void broadcastEngineering(Text message) {
@@ -464,5 +539,30 @@ public class WarpCoreService {
         return player.hasPermissionLevel(2)
                 || SecondDawnRP.PERMISSION_SERVICE.hasPermission(player, "st.engineering.admin")
                 || SecondDawnRP.PERMISSION_SERVICE.hasPermission(player, "engineering.reactor");
+    }
+
+    /** Checks if any adjacent block exposes TREnergy with at least minEnergy stored. */
+    private boolean hasAdjacentGeneratorEnergy(WarpCoreEntry entry, long minEnergy) {
+        if (server == null) return false;
+        ServerWorld world = resolveWorld(entry.getWorldKey());
+        if (world == null) return false;
+        BlockPos pos = BlockPos.fromLong(entry.getBlockPosLong());
+        try {
+            for (net.minecraft.util.math.Direction dir : net.minecraft.util.math.Direction.values()) {
+                BlockPos adjacent = pos.offset(dir);
+                var storage = team.reborn.energy.api.EnergyStorage.SIDED.find(world, adjacent, dir.getOpposite());
+                if (storage != null && storage.getAmount() >= minEnergy) return true;
+            }
+        } catch (Throwable t) {
+            return true; // TREnergy not installed — skip check
+        }
+        return false;
+    }
+
+    private ServerWorld resolveWorld(String worldKey) {
+        if (server == null) return null;
+        for (ServerWorld w : server.getWorlds())
+            if (w.getRegistryKey().getValue().toString().equals(worldKey)) return w;
+        return null;
     }
 }

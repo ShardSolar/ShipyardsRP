@@ -6,6 +6,7 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.shard.seconddawnrp.degradation.data.ComponentStatus;
 import net.shard.seconddawnrp.degradation.network.OpenEngineeringPadS2CPacket.ComponentSnapshot;
+import net.shard.seconddawnrp.degradation.network.OpenEngineeringPadS2CPacket.WarpCoreSnapshot;
 
 import java.util.List;
 
@@ -43,9 +44,11 @@ public class EngineeringPadScreen extends Screen {
 
     private static final int PAD       = 6;
     private static final int ROW_H     = 14;
-    private static final int ROWS_VIS  = 6;
+    private static final int ROWS_VIS  = 8;
 
     private final List<ComponentSnapshot> components;
+    private final List<WarpCoreSnapshot> warpCores;
+    private final String focusedCoreId;
     private final String warpCoreState;
     private final int warpCoreFuel;
     private final int warpCoreMaxFuel;
@@ -55,12 +58,16 @@ public class EngineeringPadScreen extends Screen {
 
     public EngineeringPadScreen(
             List<ComponentSnapshot> components,
+            List<WarpCoreSnapshot> warpCores,
+            String focusedCoreId,
             String warpCoreState,
             int warpCoreFuel,
             int warpCoreMaxFuel,
             int warpCorePower) {
         super(Text.literal("Engineering Systems"));
-        this.components = components;
+        this.components   = components;
+        this.warpCores    = warpCores != null ? warpCores : List.of();
+        this.focusedCoreId = focusedCoreId;
         this.warpCoreState = warpCoreState;
         this.warpCoreFuel = warpCoreFuel;
         this.warpCoreMaxFuel = warpCoreMaxFuel;
@@ -206,6 +213,9 @@ public class EngineeringPadScreen extends Screen {
         hborder(ctx, x+2, cy, x+W-2, COL_DIM);
         cy += 2;
 
+        // ── Warp Core panel ───────────────────────────────────────────────
+        cy = drawWarpCorePanel(ctx, x, cy, y);
+
         // ── Components section ────────────────────────────────────────────
         ctx.drawText(textRenderer, Text.literal("Components").formatted(Formatting.GOLD),
                 x+PAD, cy, COL_TEXT_WHITE, false);
@@ -253,14 +263,20 @@ public class EngineeringPadScreen extends Screen {
                 ctx.drawText(textRenderer, Text.literal(pct),
                         barEnd+3, ry+3, barTextCol(snap.status()), false);
 
-                // hover tooltip
+                // hover tooltip with coordinates
                 if (mx >= x+PAD && mx <= x+W-PAD && my >= ry && my <= ry+ROW_H) {
+                    net.minecraft.util.math.BlockPos bpos =
+                            net.minecraft.util.math.BlockPos.fromLong(snap.blockPosLong());
                     ctx.drawTooltip(textRenderer, List.of(
                             Text.literal(snap.displayName()).formatted(Formatting.WHITE),
                             Text.literal(snap.status().name())
                                     .formatted(statusFmt(snap.status())),
+                            Text.literal("Pos: " + bpos.getX() + ", " + bpos.getY() + ", " + bpos.getZ())
+                                    .formatted(Formatting.GRAY),
                             Text.literal(snap.worldKey()).formatted(Formatting.DARK_GRAY),
                             Text.literal("ID: " + snap.componentId())
+                                    .formatted(Formatting.DARK_GRAY),
+                            Text.literal("/engineering locate " + snap.componentId())
                                     .formatted(Formatting.DARK_GRAY)
                     ), mx, my);
                 }
@@ -280,29 +296,7 @@ public class EngineeringPadScreen extends Screen {
             }
         }
 
-        // ── Repair tasks section ──────────────────────────────────────────
-        hborder(ctx, x+2, cy, x+W-2, COL_BORDER);
-        cy += 2;
-        ctx.drawText(textRenderer, Text.literal("Repair tasks").formatted(Formatting.GOLD),
-                x+PAD, cy, COL_TEXT_WHITE, false);
-        cy += 10;
-
-        // placeholder rows (task data not passed through yet — shows structure)
-        for (int i = 0; i < 2; i++) {
-            int ry = cy + i * ROW_H;
-            if (i > 0) hborder(ctx, x+PAD, ry, x+W-PAD, COL_ROW_DIV);
-            fill(ctx, x+PAD, ry+3, x+PAD+4, ry+8,
-                    i==0 ? COL_OFFLINE : 0xFF0C3C82);
-            fill(ctx, x+PAD+8, ry+3, x+PAD+8+120, ry+8, COL_DIM);
-            fill(ctx, x+PAD+8, ry+9, x+PAD+8+90,  ry+12, COL_DIM2);
-            int bfill = i==0 ? COL_DIM : 0xFF051637;
-            int bbord = i==0 ? COL_BORDER : 0xFF0C3C82;
-            fill(ctx, x+W-42, ry+3, x+W-PAD, ry+12, bfill);
-            hborder(ctx, x+W-42, ry+3,    x+W-PAD, bbord);
-            hborder(ctx, x+W-42, ry+11,   x+W-PAD, bbord);
-            vborder(ctx, x+W-42, ry+3, ry+12, bbord);
-            vborder(ctx, x+W-PAD-1, ry+3, ry+12, bbord);
-        }
+        // Repair tasks section removed — component list shows status directly
 
         // ── Footer ────────────────────────────────────────────────────────
         int footY = y + H - 13;
@@ -321,6 +315,77 @@ public class EngineeringPadScreen extends Screen {
             if (ty2 > y+14 && ty2 < footY-4)
                 fill(ctx, x, ty2, x+2, ty2+8, COL_ACCENT);
         }
+    }
+
+
+    private int drawWarpCorePanel(DrawContext ctx, int x, int cy, int panelY) {
+        ctx.drawText(textRenderer,
+                Text.literal("Warp core").formatted(Formatting.GOLD),
+                x + PAD, cy, COL_TEXT_WHITE, false);
+        cy += 10;
+
+        if (warpCores.isEmpty()) {
+            ctx.drawText(textRenderer,
+                    Text.literal("Not registered").formatted(Formatting.DARK_GRAY),
+                    x + PAD, cy, 0xFF444433, false);
+            cy += 12;
+            hborder(ctx, x + 2, cy, x + W - 2, COL_DIM);
+            cy += 2;
+            return cy;
+        }
+
+        // If no focused core (opened in air), don't show warp core panel at all
+        if (focusedCoreId == null || focusedCoreId.isEmpty()) {
+            hborder(ctx, x + 2, cy, x + W - 2, COL_DIM);
+            cy += 2;
+            return cy;
+        }
+
+        // One row per registered core — two lines each
+        for (WarpCoreSnapshot wc : warpCores) {
+            int stateCol = switch (wc.state()) {
+                case "ONLINE"   -> 0xFF2D8214;
+                case "STARTING" -> 0xFF1A6A7A;
+                case "UNSTABLE" -> 0xFFB97308;
+                case "CRITICAL" -> 0xFFC84608;
+                case "FAILED"   -> 0xFF8A1010;
+                default          -> 0xFF444441;
+            };
+
+            // Line 1: ID + state + power%
+            String shortId = wc.entryId().length() > 16
+                    ? wc.entryId().substring(0, 16) : wc.entryId();
+            ctx.drawText(textRenderer, Text.literal(shortId),
+                    x + PAD, cy + 1, 0xFF443322, false);
+            fill(ctx, x + PAD + 3, cy, x + PAD + 5, cy + 9, stateCol);
+            ctx.drawText(textRenderer, Text.literal(wc.state()),
+                    x + PAD + 108, cy + 1, stateCol, false);
+            ctx.drawText(textRenderer, Text.literal("PWR " + wc.power() + "%"),
+                    x + W - PAD - 50, cy + 1, 0xFFAAAAAA, false);
+            cy += 10;
+
+            // Line 2: fuel bar + coil indicator
+            int fuelW = W - PAD * 2 - (wc.coilCount() > 0 ? 60 : 4);
+            int fuelFill = wc.maxFuel() > 0 ? Math.max(0, fuelW * wc.fuel() / wc.maxFuel()) : 0;
+            int fuelCol = wc.fuel() > 20 ? 0xFF2D8214 : wc.fuel() > 5 ? 0xFFB97308 : 0xFFC84608;
+            fill(ctx, x + PAD, cy, x + PAD + fuelW, cy + 7, COL_DARK_PNL);
+            if (fuelFill > 0)
+                fill(ctx, x + PAD + 1, cy + 1, x + PAD + fuelFill, cy + 6, fuelCol);
+            if (wc.coilCount() > 0) {
+                int coilCol = wc.coilHealth() > 60 ? 0xFF2D8214
+                        : wc.coilHealth() > 35 ? 0xFFB97308 : 0xFFC84608;
+                ctx.drawText(textRenderer,
+                        Text.literal("×" + wc.coilCount() + " " + wc.coilHealth() + "%"),
+                        x + PAD + fuelW + 4, cy, coilCol, false);
+            }
+            cy += 9;
+            hborder(ctx, x + PAD, cy, x + W - PAD, COL_DIM2);
+            cy += 2;
+        }
+
+        hborder(ctx, x + 2, cy, x + W - 2, COL_DIM);
+        cy += 2;
+        return cy;
     }
 
     // ── Draw helpers ──────────────────────────────────────────────────────────

@@ -66,6 +66,19 @@ public class WarpCoreConfig {
     /** Maximum number of fuel rods the controller block inventory can hold. */
     private final int maxFuelRods;
 
+    /** Peak energy output per tick at 100% power (E/tick). Default: 2048. */
+    private final long maxEnergyOutputPerTick;
+
+    /** Internal energy buffer the block entity holds before cables pull. Default: 20480 (10 ticks). */
+    private final long energyBufferSize;
+
+    /**
+     * Minimum generator energy on an adjacent face required to initiate startup.
+     * Startup assist — generator must be connected and have at least this much energy.
+     * Set to 0 to disable startup power requirement.
+     */
+    private final long startupMinGeneratorEnergy;
+
     public WarpCoreConfig(
             int startupDurationTicks,
             int shutdownDurationTicks,
@@ -82,7 +95,10 @@ public class WarpCoreConfig {
             int powerOutputOffline,
             double criticalDegradationMultiplier,
             long faultTaskCooldownMs,
-            int maxFuelRods) {
+            int maxFuelRods,
+            long maxEnergyOutputPerTick,
+            long energyBufferSize,
+            long startupMinGeneratorEnergy) {
         this.startupDurationTicks = startupDurationTicks;
         this.shutdownDurationTicks = shutdownDurationTicks;
         this.fuelDrainIntervalMs = fuelDrainIntervalMs;
@@ -99,6 +115,9 @@ public class WarpCoreConfig {
         this.criticalDegradationMultiplier = criticalDegradationMultiplier;
         this.faultTaskCooldownMs = faultTaskCooldownMs;
         this.maxFuelRods = maxFuelRods;
+        this.maxEnergyOutputPerTick = maxEnergyOutputPerTick;
+        this.energyBufferSize = energyBufferSize;
+        this.startupMinGeneratorEnergy = startupMinGeneratorEnergy;
     }
 
     public static WarpCoreConfig defaults() {
@@ -118,7 +137,10 @@ public class WarpCoreConfig {
                 0,                // powerOutputOffline
                 2.0,              // criticalDegradationMultiplier
                 30 * 60 * 1000L,  // faultTaskCooldownMs — 30 min
-                64                // maxFuelRods
+                64,               // maxFuelRods
+                2048L,            // maxEnergyOutputPerTick
+                20480L,           // energyBufferSize (10 ticks)
+                1000L             // startupMinGeneratorEnergy
         );
     }
 
@@ -138,4 +160,7 @@ public class WarpCoreConfig {
     public double getCriticalDegradationMultiplier() { return criticalDegradationMultiplier; }
     public long getFaultTaskCooldownMs() { return faultTaskCooldownMs; }
     public int getMaxFuelRods() { return maxFuelRods; }
+    public long getMaxEnergyOutputPerTick() { return maxEnergyOutputPerTick; }
+    public long getEnergyBufferSize() { return energyBufferSize; }
+    public long getStartupMinGeneratorEnergy() { return startupMinGeneratorEnergy; }
 }

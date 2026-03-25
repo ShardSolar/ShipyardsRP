@@ -73,14 +73,27 @@ public final class ComponentWarningClientHandler {
                 }
             }
             case OFFLINE -> {
+                // Initial burst — large smoke + explosion effect
                 for (int i = 0; i < 20; i++) {
-                    double ox = (world.random.nextDouble() - 0.5) * 1.0;
-                    double oz = (world.random.nextDouble() - 0.5) * 1.0;
+                    double ox = (world.random.nextDouble() - 0.5) * 1.2;
+                    double oz = (world.random.nextDouble() - 0.5) * 1.2;
                     world.addParticle(ParticleTypes.LARGE_SMOKE,
-                            cx + ox, cy + world.random.nextDouble() * 0.8, cz + oz,
-                            (world.random.nextDouble() - 0.5) * 0.02,
-                            0.06 + world.random.nextDouble() * 0.04,
-                            (world.random.nextDouble() - 0.5) * 0.02);
+                            cx + ox, cy + world.random.nextDouble() * 1.0, cz + oz,
+                            (world.random.nextDouble() - 0.5) * 0.04,
+                            0.08 + world.random.nextDouble() * 0.06,
+                            (world.random.nextDouble() - 0.5) * 0.04);
+                }
+                // Red persistent pulse — soul fire flame tinted with lava particles
+                for (int i = 0; i < 6; i++) {
+                    double ox = (world.random.nextDouble() - 0.5) * 0.5;
+                    double oz = (world.random.nextDouble() - 0.5) * 0.5;
+                    world.addParticle(ParticleTypes.LAVA,
+                            cx + ox, cy, cz + oz, 0, 0, 0);
+                }
+                // Dark column — soul fire flame for visibility
+                for (int i = 0; i < 3; i++) {
+                    world.addParticle(ParticleTypes.SOUL_FIRE_FLAME,
+                            cx, cy + i * 0.5, cz, 0, 0.02, 0);
                 }
             }
             default -> { }
@@ -96,11 +109,44 @@ public final class ComponentWarningClientHandler {
                         context.client().setScreen(
                                 new EngineeringPadScreen(
                                         payload.components(),
+                                        payload.warpCores(),
+                                        payload.focusedCoreId(),
                                         payload.warpCoreState(),
                                         payload.warpCoreFuel(),
                                         payload.warpCoreMaxFuel(),
                                         payload.warpCorePower()))
                 )
+        );
+    }
+
+    /** Register locate packet receiver — spawns END_ROD beacon at component position. */
+    public static void registerLocateReceiver() {
+        ClientPlayNetworking.registerGlobalReceiver(
+                net.shard.seconddawnrp.degradation.network.LocateComponentS2CPacket.ID,
+                (payload, context) -> context.client().execute(() -> {
+                    var world = context.client().world;
+                    if (world == null) return;
+                    double cx = payload.x(), cy = payload.y(), cz = payload.z();
+                    // Tall END_ROD column
+                    for (int h = 0; h < 12; h++) {
+                        world.addParticle(net.minecraft.particle.ParticleTypes.END_ROD,
+                                cx, cy + h, cz, 0, 0.02, 0);
+                    }
+                    // Ring at base
+                    for (int i = 0; i < 16; i++) {
+                        double angle = (Math.PI * 2 / 16) * i;
+                        world.addParticle(net.minecraft.particle.ParticleTypes.END_ROD,
+                                cx + Math.cos(angle) * 1.5, cy + 0.5,
+                                cz + Math.sin(angle) * 1.5, 0, 0.01, 0);
+                    }
+                    // Second ring higher up
+                    for (int i = 0; i < 8; i++) {
+                        double angle = (Math.PI * 2 / 8) * i;
+                        world.addParticle(net.minecraft.particle.ParticleTypes.END_ROD,
+                                cx + Math.cos(angle) * 0.8, cy + 4,
+                                cz + Math.sin(angle) * 0.8, 0, 0.01, 0);
+                    }
+                })
         );
     }
 }

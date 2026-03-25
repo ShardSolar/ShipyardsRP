@@ -3,10 +3,10 @@ package net.shard.seconddawnrp.warpcore.command;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.suggestion.SuggestionProvider;
 import net.minecraft.command.CommandRegistryAccess;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
-import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.shard.seconddawnrp.SecondDawnRP;
@@ -14,284 +14,374 @@ import net.shard.seconddawnrp.warpcore.data.FaultType;
 import net.shard.seconddawnrp.warpcore.data.WarpCoreEntry;
 
 /**
- * Commands for the warp core system.
+ * /warpcore commands — all targeting commands accept an optional [id] argument.
+ * When only one core is registered, [id] may be omitted.
  *
  * <pre>
- * /warpcore status                     — show current reactor state, fuel, coil health
- * /warpcore startup                    — initiate startup sequence (requires engineering.reactor)
- * /warpcore shutdown                   — initiate shutdown (requires engineering.reactor)
- * /warpcore fuel add <amount>          — load fuel rods (requires engineering.reactor)
- * /warpcore fuel check                 — show current fuel level
- * /warpcore linkcoil <componentId>     — link a degradation component as the resonance coil (admin)
- * /warpcore reset                      — reset from FAILED to OFFLINE (admin)
- * /warpcore register                   — register the block you're standing on as the controller (admin)
- * /warpcore unregister                 — remove warp core registration (admin)
- * /gm warpcore fault <type>            — inject a fault (GM)
+ * /warpcore list                        — list all registered cores
+ * /warpcore status [id]                 — detailed status
+ * /warpcore startup [id]                — initiate startup sequence
+ * /warpcore shutdown [id]               — initiate controlled shutdown
+ * /warpcore reset [id]                  — reset from FAILED/CRITICAL
+ * /warpcore fuel add <n> [id]           — add fuel rods
+ * /warpcore linkcoil <componentId> [id] — link resonance coil
+ * /warpcore unlinkcoil [id]             — unlink resonance coil
+ * /warpcore sources [id]                — show power source info
+ * /warpcore fault <type> [id]           — inject fault (admin)
+ * /warpcore unregister [id]             — remove registration (admin)
  * </pre>
  */
 public final class WarpCoreCommands {
 
     private WarpCoreCommands() {}
 
-    private static final com.mojang.brigadier.suggestion.SuggestionProvider<ServerCommandSource> COMPONENT_SUGGESTIONS =
+    private static final SuggestionProvider<ServerCommandSource> CORE_ID =
             (ctx, builder) -> {
-                if (net.shard.seconddawnrp.SecondDawnRP.DEGRADATION_SERVICE == null)
-                    return builder.buildFuture();
-                net.shard.seconddawnrp.SecondDawnRP.DEGRADATION_SERVICE.getAllComponents()
-                        .forEach(e -> builder.suggest(
-                                e.getComponentId(),
-                                net.minecraft.text.Text.literal(e.getDisplayName()
-                                        + " (" + e.getHealth() + "/100)")));
+                SecondDawnRP.WARP_CORE_SERVICE.getAll()
+                        .forEach(e -> builder.suggest(e.getEntryId(),
+                                Text.literal(e.getState().name() + " — fuel: " + e.getFuelRods())));
                 return builder.buildFuture();
             };
 
-    public static void register(
-            CommandDispatcher<ServerCommandSource> dispatcher,
-            CommandRegistryAccess registryAccess,
-            CommandManager.RegistrationEnvironment environment) {
+    private static final SuggestionProvider<ServerCommandSource> COMPONENT_ID =
+            (ctx, builder) -> {
+                SecondDawnRP.DEGRADATION_SERVICE.getAllComponents()
+                        .forEach(c -> builder.suggest(c.getComponentId(),
+                                Text.literal(c.getDisplayName() + " — " + c.getStatus().name())));
+                return builder.buildFuture();
+            };
 
+    private static final SuggestionProvider<ServerCommandSource> FAULT_TYPES =
+            (ctx, builder) -> {
+                for (FaultType t : FaultType.values()) builder.suggest(t.name());
+                return builder.buildFuture();
+            };
+
+    public static void register(CommandDispatcher<ServerCommandSource> dispatcher,
+                                CommandRegistryAccess access,
+                                CommandManager.RegistrationEnvironment env) {
         var warpcore = CommandManager.literal("warpcore");
 
-        // /warpcore status — any player
+        // list
+        warpcore.then(CommandManager.literal("list")
+                .executes(ctx -> executeList(ctx.getSource())));
+
+        // status [id]
         warpcore.then(CommandManager.literal("status")
-                .executes(ctx -> executeStatus(ctx.getSource())));
+                .executes(ctx -> executeStatus(ctx.getSource(), resolveId(ctx.getSource())))
+                .then(CommandManager.argument("id", StringArgumentType.word()).suggests(CORE_ID)
+                        .executes(ctx -> executeStatus(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "id")))));
 
-        // /warpcore fuel check — any player
-        warpcore.then(CommandManager.literal("fuel")
-                .then(CommandManager.literal("check")
-                        .executes(ctx -> executeFuelCheck(ctx.getSource())))
-                .then(CommandManager.literal("add")
-                        .requires(src -> hasReactorPerm(src))
-                        .then(CommandManager.argument("amount", IntegerArgumentType.integer(1, 64))
-                                .executes(ctx -> executeFuelAdd(
-                                        ctx.getSource(),
-                                        IntegerArgumentType.getInteger(ctx, "amount"))))));
-
-        // /warpcore startup — reactor cert
+        // startup [id]
         warpcore.then(CommandManager.literal("startup")
-                .requires(src -> hasReactorPerm(src))
-                .executes(ctx -> executeStartup(ctx.getSource())));
+                .executes(ctx -> executeStartup(ctx.getSource(), resolveId(ctx.getSource())))
+                .then(CommandManager.argument("id", StringArgumentType.word()).suggests(CORE_ID)
+                        .executes(ctx -> executeStartup(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "id")))));
 
-        // /warpcore shutdown — reactor cert
+        // shutdown [id]
         warpcore.then(CommandManager.literal("shutdown")
-                .requires(src -> hasReactorPerm(src))
-                .executes(ctx -> executeShutdown(ctx.getSource())));
+                .executes(ctx -> executeShutdown(ctx.getSource(), resolveId(ctx.getSource())))
+                .then(CommandManager.argument("id", StringArgumentType.word()).suggests(CORE_ID)
+                        .executes(ctx -> executeShutdown(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "id")))));
 
-        // /warpcore reset — admin only
+        // reset [id]
         warpcore.then(CommandManager.literal("reset")
-                .requires(src -> isAdmin(src))
-                .executes(ctx -> executeReset(ctx.getSource())));
+                .executes(ctx -> executeReset(ctx.getSource(), resolveId(ctx.getSource())))
+                .then(CommandManager.argument("id", StringArgumentType.word()).suggests(CORE_ID)
+                        .executes(ctx -> executeReset(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "id")))));
 
-        // /warpcore register — admin only
-        warpcore.then(CommandManager.literal("register")
-                .requires(src -> isAdmin(src))
-                .executes(ctx -> executeRegister(ctx.getSource())));
+        // fuel add <n> [id]
+        warpcore.then(CommandManager.literal("fuel")
+                .then(CommandManager.literal("add")
+                        .then(CommandManager.argument("count", IntegerArgumentType.integer(1, 200))
+                                .executes(ctx -> executeFuelAdd(ctx.getSource(),
+                                        IntegerArgumentType.getInteger(ctx, "count"),
+                                        resolveId(ctx.getSource())))
+                                .then(CommandManager.argument("id", StringArgumentType.word()).suggests(CORE_ID)
+                                        .executes(ctx -> executeFuelAdd(ctx.getSource(),
+                                                IntegerArgumentType.getInteger(ctx, "count"),
+                                                StringArgumentType.getString(ctx, "id")))))));
 
-        // /warpcore unregister — admin only
-        warpcore.then(CommandManager.literal("unregister")
-                .requires(src -> isAdmin(src))
-                .executes(ctx -> executeUnregister(ctx.getSource())));
-
-        // /warpcore linkcoil <id> — admin only
+        // linkcoil <componentId> [id]
         warpcore.then(CommandManager.literal("linkcoil")
+                .then(CommandManager.argument("componentId", StringArgumentType.word())
+                        .suggests(COMPONENT_ID)
+                        .executes(ctx -> executeLinkCoil(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "componentId"),
+                                resolveId(ctx.getSource())))
+                        .then(CommandManager.argument("id", StringArgumentType.word()).suggests(CORE_ID)
+                                .executes(ctx -> executeLinkCoil(ctx.getSource(),
+                                        StringArgumentType.getString(ctx, "componentId"),
+                                        StringArgumentType.getString(ctx, "id"))))));
+
+        // unlinkcoil <componentId> [coreId]
+        warpcore.then(CommandManager.literal("unlinkcoil")
                 .requires(src -> isAdmin(src))
                 .then(CommandManager.argument("componentId", StringArgumentType.word())
-                        .suggests(COMPONENT_SUGGESTIONS)
-                        .executes(ctx -> executeLinkCoil(
-                                ctx.getSource(),
-                                StringArgumentType.getString(ctx, "componentId")))));
+                        .suggests(COMPONENT_ID)
+                        .executes(ctx -> executeUnlinkCoil(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "componentId"),
+                                resolveId(ctx.getSource())))
+                        .then(CommandManager.argument("id", StringArgumentType.word()).suggests(CORE_ID)
+                                .executes(ctx -> executeUnlinkCoil(ctx.getSource(),
+                                        StringArgumentType.getString(ctx, "componentId"),
+                                        StringArgumentType.getString(ctx, "id"))))));
 
-        // /gm warpcore fault <type> — GM
-        var gmWarpcore = CommandManager.literal("warpcore")
-                .requires(src -> isGM(src));
-        gmWarpcore.then(CommandManager.literal("fault")
-                .then(CommandManager.literal("fuel")
-                        .executes(ctx -> executeInjectFault(ctx.getSource(), FaultType.FUEL_DEPLETED)))
-                .then(CommandManager.literal("coil")
-                        .executes(ctx -> executeInjectFault(ctx.getSource(), FaultType.COIL_DEGRADED)))
-                .then(CommandManager.literal("cascade")
-                        .executes(ctx -> executeInjectFault(ctx.getSource(), FaultType.CASCADING_FAILURE)))
-                .then(CommandManager.literal("gm")
-                        .executes(ctx -> executeInjectFault(ctx.getSource(), FaultType.GM_INJECTED))));
+        // unlinkallcoils [id]
+        warpcore.then(CommandManager.literal("unlinkallcoils")
+                .requires(src -> isAdmin(src))
+                .executes(ctx -> executeUnlinkAllCoils(ctx.getSource(), resolveId(ctx.getSource())))
+                .then(CommandManager.argument("id", StringArgumentType.word()).suggests(CORE_ID)
+                        .executes(ctx -> executeUnlinkAllCoils(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "id")))));
+
+        // sources [id]
+        warpcore.then(CommandManager.literal("sources")
+                .executes(ctx -> executeSources(ctx.getSource(), resolveId(ctx.getSource())))
+                .then(CommandManager.argument("id", StringArgumentType.word()).suggests(CORE_ID)
+                        .executes(ctx -> executeSources(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "id")))));
+
+        // fault <type> [id] — admin
+        warpcore.then(CommandManager.literal("fault")
+                .requires(src -> isAdmin(src))
+                .then(CommandManager.argument("type", StringArgumentType.word()).suggests(FAULT_TYPES)
+                        .executes(ctx -> executeFault(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "type"),
+                                resolveId(ctx.getSource())))
+                        .then(CommandManager.argument("id", StringArgumentType.word()).suggests(CORE_ID)
+                                .executes(ctx -> executeFault(ctx.getSource(),
+                                        StringArgumentType.getString(ctx, "type"),
+                                        StringArgumentType.getString(ctx, "id"))))));
+
+        // unregister [id] — admin
+        warpcore.then(CommandManager.literal("unregister")
+                .requires(src -> isAdmin(src))
+                .executes(ctx -> executeUnregister(ctx.getSource(), resolveId(ctx.getSource())))
+                .then(CommandManager.argument("id", StringArgumentType.word()).suggests(CORE_ID)
+                        .executes(ctx -> executeUnregister(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "id")))));
 
         dispatcher.register(warpcore);
-        dispatcher.register(CommandManager.literal("gm").then(gmWarpcore));
     }
 
     // ── Handlers ──────────────────────────────────────────────────────────────
 
-    private static int executeStatus(ServerCommandSource source) {
-        if (!SecondDawnRP.WARP_CORE_SERVICE.isRegistered()) {
-            source.sendFeedback(() ->
-                    Text.literal("No warp core registered.").formatted(Formatting.GRAY), false);
+    private static int executeList(ServerCommandSource src) {
+        var all = SecondDawnRP.WARP_CORE_SERVICE.getAll();
+        if (all.isEmpty()) {
+            src.sendFeedback(() -> Text.literal("No warp cores registered.").formatted(Formatting.GRAY), false);
             return 1;
         }
-        WarpCoreEntry e = SecondDawnRP.WARP_CORE_SERVICE.getEntry().get();
-        var adapter = SecondDawnRP.WARP_CORE_SERVICE.getAdapter();
+        src.sendFeedback(() -> Text.literal("── Warp Cores ──").formatted(Formatting.GOLD), false);
+        all.forEach(e -> {
+            int coil = SecondDawnRP.WARP_CORE_SERVICE.getCoilHealth(e);
+            String coilStr = coil < 0 ? "no coil" : coil + "/100";
+            src.sendFeedback(() -> Text.literal("  " + e.getEntryId()
+                            + " — " + e.getState().name()
+                            + " | fuel: " + e.getFuelRods()
+                            + " | coil: " + coilStr)
+                    .formatted(stateColour(e)), false);
+        });
+        return 1;
+    }
 
-        source.sendFeedback(() ->
-                Text.literal("── Warp Core Status ──").formatted(Formatting.GOLD), false);
-        source.sendFeedback(() ->
-                Text.literal("State: ").formatted(Formatting.GRAY)
-                        .append(Text.literal(e.getState().name())
-                                .formatted(stateColor(e.getState()))), false);
-        source.sendFeedback(() ->
-                Text.literal("Power output: ").formatted(Formatting.GRAY)
-                        .append(Text.literal(e.getCurrentPowerOutput() + "%")
-                                .formatted(Formatting.WHITE)), false);
-        source.sendFeedback(() ->
-                Text.literal("Fuel rods: ").formatted(Formatting.GRAY)
-                        .append(Text.literal(e.getFuelRods() + " / "
-                                        + SecondDawnRP.WARP_CORE_SERVICE.getConfig().getMaxFuelRods())
-                                .formatted(Formatting.WHITE)), false);
+    private static int executeStatus(ServerCommandSource src, String id) {
+        if (id == null) { src.sendError(Text.literal("No core registered or specify an ID.")); return 0; }
+        var opt = SecondDawnRP.WARP_CORE_SERVICE.getById(id);
+        if (opt.isEmpty()) { src.sendError(Text.literal("Unknown core: " + id)); return 0; }
+        WarpCoreEntry e = opt.get();
+        var adapter = SecondDawnRP.WARP_CORE_SERVICE.getAdapter(id);
+        int coil = SecondDawnRP.WARP_CORE_SERVICE.getCoilHealth(e);
 
-        int coilId = e.getResonanceCoilComponentId() != null
-                ? SecondDawnRP.DEGRADATION_SERVICE
-                .getById(e.getResonanceCoilComponentId())
-                .map(c -> c.getHealth()).orElse(-1) : -1;
-        if (coilId >= 0) {
-            final int health = coilId;
-            source.sendFeedback(() ->
-                    Text.literal("Resonance coil: ").formatted(Formatting.GRAY)
-                            .append(Text.literal(health + "/100").formatted(Formatting.WHITE)), false);
+        src.sendFeedback(() -> Text.literal("── Warp Core: " + id + " ──").formatted(Formatting.GOLD), false);
+        src.sendFeedback(() -> Text.literal("State:  " + e.getState().name()).formatted(stateColour(e)), false);
+        src.sendFeedback(() -> Text.literal("Fuel:   " + e.getFuelRods() + " / "
+                + SecondDawnRP.WARP_CORE_SERVICE.getConfig().getMaxFuelRods() + " rods").formatted(Formatting.GRAY), false);
+        src.sendFeedback(() -> Text.literal("Power:  " + e.getCurrentPowerOutput() + "%").formatted(Formatting.GRAY), false);
+        var coilIds = e.getResonanceCoilIds();
+        if (coilIds.isEmpty()) {
+            src.sendFeedback(() -> Text.literal("Coils:  Not linked").formatted(Formatting.GRAY), false);
         } else {
-            source.sendFeedback(() ->
-                    Text.literal("Resonance coil: ").formatted(Formatting.GRAY)
-                            .append(Text.literal("not linked").formatted(Formatting.DARK_GRAY)), false);
+            src.sendFeedback(() -> Text.literal("Coils:  " + coilIds.size() + " linked | effective health: " + coil + "/100").formatted(Formatting.GRAY), false);
+            coilIds.forEach(cid -> src.sendFeedback(() ->
+                    Text.literal("  - " + cid).formatted(Formatting.DARK_GRAY), false));
         }
+        if (adapter != null)
+            src.sendFeedback(() -> Text.literal("Source: " + adapter.getPrimaryFuelLabel()
+                    + " (" + adapter.getFuelLevelPercent() + "%)").formatted(Formatting.GRAY), false);
         return 1;
     }
 
-    private static int executeFuelCheck(ServerCommandSource source) {
-        if (!SecondDawnRP.WARP_CORE_SERVICE.isRegistered()) {
-            source.sendError(Text.literal("No warp core registered."));
-            return 0;
-        }
-        WarpCoreEntry e = SecondDawnRP.WARP_CORE_SERVICE.getEntry().get();
-        int max = SecondDawnRP.WARP_CORE_SERVICE.getConfig().getMaxFuelRods();
-        source.sendFeedback(() ->
-                Text.literal("Fuel rods: " + e.getFuelRods() + " / " + max
-                                + " (" + (e.getFuelRods() * 100 / Math.max(1, max)) + "%)")
-                        .formatted(Formatting.GOLD), false);
-        return 1;
-    }
-
-    private static int executeFuelAdd(ServerCommandSource source, int amount) {
-        ServerPlayerEntity player = source.getPlayer();
-        if (player == null) { source.sendError(Text.literal("Must be a player.")); return 0; }
-        if (!SecondDawnRP.WARP_CORE_SERVICE.isRegistered()) {
-            source.sendError(Text.literal("No warp core registered.")); return 0;
-        }
-        int added = SecondDawnRP.WARP_CORE_SERVICE.loadFuel(amount);
-        source.sendFeedback(() ->
-                Text.literal("Loaded " + added + " fuel rod(s). Total: "
-                                + SecondDawnRP.WARP_CORE_SERVICE.getEntry().get().getFuelRods())
-                        .formatted(Formatting.GREEN), false);
-        return 1;
-    }
-
-    private static int executeStartup(ServerCommandSource source) {
-        ServerPlayerEntity player = source.getPlayer();
-        if (player == null) { source.sendError(Text.literal("Must be a player.")); return 0; }
-        SecondDawnRP.WARP_CORE_SERVICE.initiateStartup(player);
-        return 1;
-    }
-
-    private static int executeShutdown(ServerCommandSource source) {
-        ServerPlayerEntity player = source.getPlayer();
-        if (player == null) { source.sendError(Text.literal("Must be a player.")); return 0; }
-        SecondDawnRP.WARP_CORE_SERVICE.initiateShutdown(player);
-        return 1;
-    }
-
-    private static int executeReset(ServerCommandSource source) {
-        ServerPlayerEntity player = source.getPlayer();
-        if (player == null) { source.sendError(Text.literal("Must be a player.")); return 0; }
-        SecondDawnRP.WARP_CORE_SERVICE.resetFromFailed(player);
-        return 1;
-    }
-
-    private static int executeRegister(ServerCommandSource source) {
-        ServerPlayerEntity player = source.getPlayer();
-        if (player == null) { source.sendError(Text.literal("Must be a player.")); return 0; }
-        if (SecondDawnRP.WARP_CORE_SERVICE.isRegistered()) {
-            source.sendError(Text.literal("A warp core is already registered. Unregister it first."));
-            return 0;
-        }
-        String worldKey = player.getWorld().getRegistryKey().getValue().toString();
-        long posLong = player.getBlockPos().down().asLong();
-        SecondDawnRP.WARP_CORE_SERVICE.register(worldKey, posLong, player.getUuid());
-        source.sendFeedback(() ->
-                Text.literal("Warp core registered at your position.").formatted(Formatting.GREEN), true);
-        return 1;
-    }
-
-    private static int executeUnregister(ServerCommandSource source) {
-        if (!SecondDawnRP.WARP_CORE_SERVICE.isRegistered()) {
-            source.sendError(Text.literal("No warp core registered."));
-            return 0;
-        }
-        SecondDawnRP.WARP_CORE_SERVICE.unregister();
-        source.sendFeedback(() ->
-                Text.literal("Warp core unregistered.").formatted(Formatting.YELLOW), true);
-        return 1;
-    }
-
-    private static int executeLinkCoil(ServerCommandSource source, String componentId) {
-        var opt = SecondDawnRP.DEGRADATION_SERVICE.getById(componentId);
-        if (opt.isEmpty()) {
-            source.sendError(Text.literal("No component with id '" + componentId + "'."));
-            return 0;
-        }
-        SecondDawnRP.WARP_CORE_SERVICE.linkResonanceCoil(componentId);
-        source.sendFeedback(() ->
-                Text.literal("Resonance coil linked to component '"
-                        + opt.get().getDisplayName() + "'.").formatted(Formatting.GREEN), true);
-        return 1;
-    }
-
-    private static int executeInjectFault(ServerCommandSource source, FaultType type) {
-        if (!SecondDawnRP.WARP_CORE_SERVICE.isRegistered()) {
-            source.sendError(Text.literal("No warp core registered.")); return 0;
-        }
-        SecondDawnRP.WARP_CORE_SERVICE.injectFault(type, "GM-injected fault.");
-        source.sendFeedback(() ->
-                Text.literal("Fault injected: " + type.getDisplayName()).formatted(Formatting.RED), true);
-        return 1;
-    }
-
-    // ── Permission helpers ────────────────────────────────────────────────────
-
-    private static boolean hasReactorPerm(ServerCommandSource src) {
+    private static int executeStartup(ServerCommandSource src, String id) {
+        if (id == null) { src.sendError(Text.literal("No core registered or specify an ID.")); return 0; }
         var player = src.getPlayer();
-        if (player == null) return src.hasPermissionLevel(2);
-        return player.hasPermissionLevel(2)
-                || SecondDawnRP.PERMISSION_SERVICE.hasPermission(player, "st.engineering.admin")
-                || SecondDawnRP.PERMISSION_SERVICE.hasPermission(player, "engineering.reactor");
+        if (player == null) { src.sendError(Text.literal("Must be a player.")); return 0; }
+        SecondDawnRP.WARP_CORE_SERVICE.initiateStartup(id, player);
+        return 1;
+    }
+
+    private static int executeShutdown(ServerCommandSource src, String id) {
+        if (id == null) { src.sendError(Text.literal("No core registered or specify an ID.")); return 0; }
+        var player = src.getPlayer();
+        if (player == null) { src.sendError(Text.literal("Must be a player.")); return 0; }
+        SecondDawnRP.WARP_CORE_SERVICE.initiateShutdown(id, player);
+        return 1;
+    }
+
+    private static int executeReset(ServerCommandSource src, String id) {
+        if (id == null) { src.sendError(Text.literal("No core registered or specify an ID.")); return 0; }
+        var player = src.getPlayer();
+        if (player == null) { src.sendError(Text.literal("Must be a player.")); return 0; }
+        SecondDawnRP.WARP_CORE_SERVICE.resetFromFailed(id, player);
+        return 1;
+    }
+
+    private static int executeFuelAdd(ServerCommandSource src, int count, String id) {
+        if (id == null) { src.sendError(Text.literal("No core registered or specify an ID.")); return 0; }
+        int loaded = SecondDawnRP.WARP_CORE_SERVICE.loadFuel(id, count);
+        src.sendFeedback(() -> Text.literal("Loaded " + loaded + " fuel rods into " + id + ".")
+                .formatted(Formatting.GREEN), false);
+        return 1;
+    }
+
+    private static int executeLinkCoil(ServerCommandSource src, String componentId, String id) {
+        if (id == null) { src.sendError(Text.literal("No core registered or specify an ID.")); return 0; }
+        if (SecondDawnRP.WARP_CORE_SERVICE.linkResonanceCoil(id, componentId)) {
+            src.sendFeedback(() -> Text.literal("Resonance coil '" + componentId + "' linked to " + id + ".")
+                    .formatted(Formatting.GREEN), false);
+        } else {
+            src.sendError(Text.literal("Unknown core: " + id));
+        }
+        return 1;
+    }
+
+    private static int executeUnlinkCoil(ServerCommandSource src, String componentId, String id) {
+        if (id == null) { src.sendError(Text.literal("No core registered or specify an ID.")); return 0; }
+        if (SecondDawnRP.WARP_CORE_SERVICE.unlinkResonanceCoil(id, componentId)) {
+            src.sendFeedback(() -> Text.literal("Coil '" + componentId + "' unlinked from " + id + ".")
+                    .formatted(Formatting.YELLOW), false);
+        } else {
+            src.sendError(Text.literal("Unknown core: " + id));
+        }
+        return 1;
+    }
+
+    private static int executeUnlinkAllCoils(ServerCommandSource src, String id) {
+        if (id == null) { src.sendError(Text.literal("No core registered or specify an ID.")); return 0; }
+        if (SecondDawnRP.WARP_CORE_SERVICE.unlinkAllCoils(id)) {
+            src.sendFeedback(() -> Text.literal("All coils unlinked from " + id + ".")
+                    .formatted(Formatting.YELLOW), false);
+        } else {
+            src.sendError(Text.literal("Unknown core: " + id));
+        }
+        return 1;
+    }
+
+    private static int executeSources(ServerCommandSource src, String id) {
+        if (id == null) { src.sendError(Text.literal("No core registered or specify an ID.")); return 0; }
+        var opt = SecondDawnRP.WARP_CORE_SERVICE.getById(id);
+        if (opt.isEmpty()) { src.sendError(Text.literal("Unknown core: " + id)); return 0; }
+        WarpCoreEntry e = opt.get();
+        var adapter = SecondDawnRP.WARP_CORE_SERVICE.getAdapter(id);
+        src.sendFeedback(() -> Text.literal("── Power Sources: " + id + " ──").formatted(Formatting.GOLD), false);
+
+        // Raw TREnergy face scan — shows exactly what each face sees
+        if (src.getServer() != null) {
+            for (net.minecraft.server.world.ServerWorld w : src.getServer().getWorlds()) {
+                if (!w.getRegistryKey().getValue().toString().equals(e.getWorldKey())) continue;
+                net.minecraft.util.math.BlockPos pos = net.minecraft.util.math.BlockPos.fromLong(e.getBlockPosLong());
+                src.sendFeedback(() -> Text.literal("  Controller pos: " + pos.getX() + "," + pos.getY() + "," + pos.getZ()
+                        + " in " + e.getWorldKey()).formatted(Formatting.GRAY), false);
+                for (net.minecraft.util.math.Direction dir : net.minecraft.util.math.Direction.values()) {
+                    try {
+                        // Query the adjacent block's face pointing back at the controller
+                        net.minecraft.util.math.BlockPos adjacent = pos.offset(dir);
+                        var storage = team.reborn.energy.api.EnergyStorage.SIDED.find(w, adjacent, dir.getOpposite());
+                        if (storage != null) {
+                            src.sendFeedback(() -> Text.literal("  [" + dir.name() + " adjacent] TREnergy found: "
+                                            + storage.getAmount() + " / " + storage.getCapacity() + " E")
+                                    .formatted(Formatting.GREEN), false);
+                        } else {
+                            src.sendFeedback(() -> Text.literal("  [" + dir.name() + " adjacent] no energy storage")
+                                    .formatted(Formatting.DARK_GRAY), false);
+                        }
+                    } catch (Throwable t) {
+                        src.sendFeedback(() -> Text.literal("  [" + dir.name() + "] TREnergy API error: " + t.getMessage())
+                                .formatted(Formatting.RED), false);
+                    }
+                }
+                break;
+            }
+        }
+
+        if (adapter instanceof net.shard.seconddawnrp.warpcore.adapter.TRenergyPowerAdapter tr) {
+            src.sendFeedback(() -> Text.literal("  Active adapter: TREnergy — "
+                            + tr.getStoredEnergy() + " / " + tr.getMaxCapacity()
+                            + " E (" + adapter.getFuelLevelPercent() + "% fill)")
+                    .formatted(Formatting.GREEN), false);
+        } else {
+            src.sendFeedback(() -> Text.literal("  Active adapter: Standalone (fuel rods) — "
+                            + e.getFuelRods() + " / "
+                            + SecondDawnRP.WARP_CORE_SERVICE.getConfig().getMaxFuelRods())
+                    .formatted(Formatting.YELLOW), false);
+        }
+        return 1;
+    }
+
+    private static int executeFault(ServerCommandSource src, String typeName, String id) {
+        if (id == null) { src.sendError(Text.literal("No core registered or specify an ID.")); return 0; }
+        FaultType type;
+        try { type = FaultType.valueOf(typeName.toUpperCase()); }
+        catch (IllegalArgumentException e) { src.sendError(Text.literal("Unknown fault type: " + typeName)); return 0; }
+        SecondDawnRP.WARP_CORE_SERVICE.injectFault(id, type, "Manual injection by " + src.getName());
+        src.sendFeedback(() -> Text.literal("Fault injected: " + typeName + " → " + id)
+                .formatted(Formatting.RED), true);
+        return 1;
+    }
+
+    private static int executeUnregister(ServerCommandSource src, String id) {
+        if (id == null) { src.sendError(Text.literal("No core registered or specify an ID.")); return 0; }
+        if (SecondDawnRP.WARP_CORE_SERVICE.unregister(id)) {
+            src.sendFeedback(() -> Text.literal("Warp core " + id + " unregistered.")
+                    .formatted(Formatting.YELLOW), true);
+        } else {
+            src.sendError(Text.literal("Unknown core: " + id));
+        }
+        return 1;
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Resolves the entry ID when the argument is omitted.
+     * Returns the single registered core's ID, or null if zero or multiple.
+     */
+    private static String resolveId(ServerCommandSource src) {
+        var all = SecondDawnRP.WARP_CORE_SERVICE.getAll();
+        if (all.size() == 1) return all.iterator().next().getEntryId();
+        return null;
     }
 
     private static boolean isAdmin(ServerCommandSource src) {
-        var player = src.getPlayer();
-        if (player == null) return src.hasPermissionLevel(2);
-        return player.hasPermissionLevel(2)
-                || SecondDawnRP.PERMISSION_SERVICE.hasPermission(player, "st.engineering.admin");
+        var p = src.getPlayer();
+        if (p == null) return src.hasPermissionLevel(2);
+        return p.hasPermissionLevel(2)
+                || SecondDawnRP.PERMISSION_SERVICE.hasPermission(p, "st.engineering.admin");
     }
 
-    private static boolean isGM(ServerCommandSource src) {
-        var player = src.getPlayer();
-        if (player == null) return src.hasPermissionLevel(2);
-        return player.hasPermissionLevel(2)
-                || SecondDawnRP.PERMISSION_SERVICE.hasPermission(player, "st.gm.use");
-    }
-
-    private static Formatting stateColor(net.shard.seconddawnrp.warpcore.data.ReactorState state) {
-        return switch (state) {
-            case ONLINE    -> Formatting.GREEN;
-            case STARTING  -> Formatting.AQUA;
-            case UNSTABLE  -> Formatting.YELLOW;
-            case CRITICAL  -> Formatting.RED;
-            case FAILED    -> Formatting.DARK_RED;
-            case OFFLINE   -> Formatting.GRAY;
+    private static Formatting stateColour(WarpCoreEntry e) {
+        return switch (e.getState()) {
+            case ONLINE   -> Formatting.GREEN;
+            case STARTING -> Formatting.AQUA;
+            case UNSTABLE -> Formatting.YELLOW;
+            case CRITICAL -> Formatting.RED;
+            case FAILED   -> Formatting.DARK_RED;
+            case OFFLINE  -> Formatting.GRAY;
         };
     }
 }

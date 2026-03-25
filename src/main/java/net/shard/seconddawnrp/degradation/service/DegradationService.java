@@ -89,9 +89,16 @@ public class DegradationService {
         entry.setHealth(entry.getHealth() - drain);
         entry.setLastDrainTickMs(now);
 
+        // CRITICAL transition — generate repair task
         if (previousStatus != ComponentStatus.CRITICAL
                 && entry.getStatus() == ComponentStatus.CRITICAL) {
             maybeGenerateRepairTask(entry, now);
+        }
+
+        // OFFLINE transition — broadcast alert, stop further drain
+        if (previousStatus != ComponentStatus.OFFLINE
+                && entry.getStatus() == ComponentStatus.OFFLINE) {
+            onComponentOffline(entry);
         }
 
         repository.save(entry);
@@ -291,6 +298,28 @@ public class DegradationService {
     }
 
     public boolean isReactorCritical() { return reactorCritical; }
+
+    /**
+     * Returns true if the block at the given position has a registered OFFLINE component.
+     * Used by UseBlockCallback to suppress player interactions with failed components.
+     */
+    public boolean isBlockDisabled(String worldKey, long blockPosLong) {
+        return cache.values().stream()
+                .anyMatch(e -> e.getWorldKey().equals(worldKey)
+                        && e.getBlockPosLong() == blockPosLong
+                        && e.getStatus() == ComponentStatus.OFFLINE);
+    }
+
+    private void onComponentOffline(ComponentEntry entry) {
+        System.out.println("[SecondDawnRP] Component OFFLINE: " + entry.getDisplayName());
+        if (server == null) return;
+        net.minecraft.text.Text msg = net.minecraft.text.Text.literal(
+                        "[Engineering] OFFLINE: " + entry.getDisplayName()
+                                + " is non-functional. Immediate repair required.")
+                .formatted(net.minecraft.util.Formatting.DARK_RED);
+        server.getPlayerManager().getPlayerList()
+                .forEach(p -> p.sendMessage(msg, false));
+    }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
