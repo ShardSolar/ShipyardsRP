@@ -12,37 +12,27 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.shard.seconddawnrp.SecondDawnRP;
+import net.shard.seconddawnrp.playerdata.PlayerProfile;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * GM commands for the character lifecycle.
+ * GM commands for character lifecycle.
  *
- * <p>Commands:
  * <pre>
- *  /gm character kill [player] transfer:[percent]
- *      Two-step: first call issues a confirmation prompt, second (confirm) executes.
- *      Requires op level 3.
- *
- *  /gm character set name [player] [name]
- *  /gm character set bio  [player] [bio]
+ *  /gm character kill [player] [transferPercent]  — two-step death
+ *  /gm character killconfirm
+ *  /gm character set name    [player] [name]
+ *  /gm character set bio     [player] [bio]
  *  /gm character set species [player] [speciesId]
  *  /gm character set permadeath [player] [true|false]
- *      Direct GM overrides for character fields. Audited.
- *
  *  /gm injury modify [player] [days]
- *      Adjust the expiry of a player's active long-term injury by N days.
- *      Positive = extend, negative = reduce. Audited.
  * </pre>
  */
 public final class GmCharacterCommands {
 
-    /**
-     * Pending death confirmations. Key = GM UUID, Value = target player UUID.
-     * Entries expire after 30 seconds (checked on each command invocation).
-     */
     private static final Map<UUID, PendingKill> PENDING_KILLS = new HashMap<>();
     private static final long CONFIRMATION_WINDOW_MS = 30_000;
 
@@ -53,37 +43,29 @@ public final class GmCharacterCommands {
                 CommandManager.literal("gm")
                         .requires(src -> src.hasPermissionLevel(3))
                         .then(CommandManager.literal("character")
-
-                                // /gm character kill <player> <transferPercent>
                                 .then(CommandManager.literal("kill")
                                         .then(CommandManager.argument("player", EntityArgumentType.player())
                                                 .then(CommandManager.argument("transfer", FloatArgumentType.floatArg(0f, 100f))
                                                         .executes(ctx -> killStep1(ctx)))))
-
-                                // /gm character kill confirm
                                 .then(CommandManager.literal("killconfirm")
                                         .executes(ctx -> killStep2(ctx)))
-
-                                // /gm character set ...
                                 .then(CommandManager.literal("set")
                                         .then(CommandManager.literal("name")
                                                 .then(CommandManager.argument("player", EntityArgumentType.player())
                                                         .then(CommandManager.argument("name", StringArgumentType.greedyString())
-                                                                .executes(ctx -> setName(ctx)))))
+                                                                .executes(ctx -> setField(ctx, "name")))))
                                         .then(CommandManager.literal("bio")
                                                 .then(CommandManager.argument("player", EntityArgumentType.player())
-                                                        .then(CommandManager.argument("bio", StringArgumentType.greedyString())
-                                                                .executes(ctx -> setBio(ctx)))))
+                                                        .then(CommandManager.argument("value", StringArgumentType.greedyString())
+                                                                .executes(ctx -> setField(ctx, "bio")))))
                                         .then(CommandManager.literal("species")
                                                 .then(CommandManager.argument("player", EntityArgumentType.player())
-                                                        .then(CommandManager.argument("speciesId", StringArgumentType.word())
-                                                                .executes(ctx -> setSpecies(ctx)))))
+                                                        .then(CommandManager.argument("value", StringArgumentType.word())
+                                                                .executes(ctx -> setField(ctx, "species")))))
                                         .then(CommandManager.literal("permadeath")
                                                 .then(CommandManager.argument("player", EntityArgumentType.player())
                                                         .then(CommandManager.argument("value", StringArgumentType.word())
-                                                                .executes(ctx -> setPermadeath(ctx)))))))
-
-                        // /gm injury modify <player> <days>
+                                                                .executes(ctx -> setField(ctx, "permadeath")))))))
                         .then(CommandManager.literal("injury")
                                 .then(CommandManager.literal("modify")
                                         .then(CommandManager.argument("player", EntityArgumentType.player())
@@ -92,31 +74,25 @@ public final class GmCharacterCommands {
         );
     }
 
-    // ── /gm character kill — step 1: request confirmation ────────────────────
+    // ── Kill step 1 ───────────────────────────────────────────────────────────
 
     private static int killStep1(CommandContext<ServerCommandSource> ctx) {
         try {
-            ServerPlayerEntity gmPlayer = ctx.getSource().getPlayerOrThrow();
-            ServerPlayerEntity target   = EntityArgumentType.getPlayer(ctx, "player");
-            float transferPct           = FloatArgumentType.getFloat(ctx, "transfer");
+            ServerPlayerEntity gm     = ctx.getSource().getPlayerOrThrow();
+            ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
+            float transferPct         = FloatArgumentType.getFloat(ctx, "transfer");
 
-            // Clean up stale pending kills first
             PENDING_KILLS.entrySet().removeIf(
                     e -> System.currentTimeMillis() - e.getValue().createdAtMs > CONFIRMATION_WINDOW_MS);
+            PENDING_KILLS.put(gm.getUuid(), new PendingKill(target.getUuid(), transferPct / 100f));
 
-            PENDING_KILLS.put(gmPlayer.getUuid(),
-                    new PendingKill(target.getUuid(), transferPct / 100f));
-
-            gmPlayer.sendMessage(
-                    Text.literal("[Character Death] You are about to kill ")
-                            .formatted(Formatting.RED)
-                            .append(Text.literal(target.getName().getString()).formatted(Formatting.YELLOW))
-                            .append(Text.literal(" with a " + (int) transferPct + "% point transfer. ")
-                                    .formatted(Formatting.RED))
-                            .append(Text.literal("Run /gm character killconfirm within 30 seconds to confirm.")
-                                    .formatted(Formatting.GOLD)),
-                    false
-            );
+            gm.sendMessage(Text.literal("[Character Death] About to kill ")
+                    .formatted(Formatting.RED)
+                    .append(Text.literal(target.getName().getString()).formatted(Formatting.YELLOW))
+                    .append(Text.literal(" — " + (int) transferPct + "% points transferred. ")
+                            .formatted(Formatting.RED))
+                    .append(Text.literal("Run /gm character killconfirm within 30s.")
+                            .formatted(Formatting.GOLD)), false);
             return 1;
         } catch (Exception e) {
             ctx.getSource().sendError(Text.literal("Error: " + e.getMessage()));
@@ -124,62 +100,37 @@ public final class GmCharacterCommands {
         }
     }
 
-    // ── /gm character killconfirm — step 2: execute death ────────────────────
+    // ── Kill step 2 ───────────────────────────────────────────────────────────
 
     private static int killStep2(CommandContext<ServerCommandSource> ctx) {
         try {
-            ServerPlayerEntity gmPlayer = ctx.getSource().getPlayerOrThrow();
-            UUID gmUuid = gmPlayer.getUuid();
+            ServerPlayerEntity gm = ctx.getSource().getPlayerOrThrow();
+            PendingKill pending   = PENDING_KILLS.remove(gm.getUuid());
 
-            PendingKill pending = PENDING_KILLS.remove(gmUuid);
-            if (pending == null) {
-                gmPlayer.sendMessage(
-                        Text.literal("[Character] No pending kill to confirm, or confirmation expired.")
-                                .formatted(Formatting.RED), false);
-                return 0;
-            }
-            if (System.currentTimeMillis() - pending.createdAtMs > CONFIRMATION_WINDOW_MS) {
-                gmPlayer.sendMessage(
-                        Text.literal("[Character] Confirmation window expired. Re-run the kill command.")
-                                .formatted(Formatting.RED), false);
+            if (pending == null || System.currentTimeMillis() - pending.createdAtMs > CONFIRMATION_WINDOW_MS) {
+                gm.sendMessage(Text.literal("[Character] No pending kill or confirmation expired.")
+                        .formatted(Formatting.RED), false);
                 return 0;
             }
 
-            UUID targetUuid = pending.targetUuid;
-            ServerPlayerEntity targetPlayer =
-                    ctx.getSource().getServer().getPlayerManager().getPlayer(targetUuid);
+            ServerPlayerEntity target = ctx.getSource().getServer()
+                    .getPlayerManager().getPlayer(pending.targetUuid);
 
-            // Check consent if player is online and doesn't have permadeath consent
-            CharacterProfile profile = SecondDawnRP.CHARACTER_SERVICE.get(targetUuid).orElse(null);
-            if (profile != null && !profile.isPermadeathConsent() && targetPlayer == null) {
-                gmPlayer.sendMessage(
-                        Text.literal("[Character] Target player is offline. "
-                                        + "Cannot confirm consent. Ask them to be online for character death.")
-                                .formatted(Formatting.RED), false);
-                return 0;
-            }
+            SecondDawnRP.PROFILE_SERVICE.executeCharacterDeath(
+                    pending.targetUuid,
+                    pending.transferPercent,
+                    target,
+                    SecondDawnRP.CHARACTER_ARCHIVE);
 
-            int currentPoints = 0;
-            if (targetPlayer != null) {
-                var playerProfile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(targetUuid);
-                if (playerProfile != null) currentPoints = playerProfile.getRankPoints();
-            }
+            PlayerProfile profile = SecondDawnRP.PROFILE_SERVICE.getLoaded(pending.targetUuid);
+            String name = profile != null && profile.getCharacterName() != null
+                    ? profile.getCharacterName() : pending.targetUuid.toString();
 
-            CharacterProfile newChar = SecondDawnRP.CHARACTER_SERVICE.executeCharacterDeath(
-                    targetUuid, pending.transferPercent, currentPoints, targetPlayer);
-
-            String targetName = profile != null ? profile.getCharacterName() : targetUuid.toString();
-            gmPlayer.sendMessage(
-                    Text.literal("[Character] ")
-                            .formatted(Formatting.GREEN)
-                            .append(Text.literal(targetName).formatted(Formatting.YELLOW))
-                            .append(Text.literal(" has died. New blank character created. "
-                                            + "New character ID: " + newChar.getCharacterId())
-                                    .formatted(Formatting.GREEN)),
-                    false
-            );
-
-            // TODO Phase 9.5: PROFILE_SERVICE → set division to UNASSIGNED
+            gm.sendMessage(Text.literal("[Character] ")
+                    .formatted(Formatting.GREEN)
+                    .append(Text.literal(name).formatted(Formatting.YELLOW))
+                    .append(Text.literal(" has died. New blank character created.")
+                            .formatted(Formatting.GREEN)), false);
             return 1;
         } catch (Exception e) {
             ctx.getSource().sendError(Text.literal("Error: " + e.getMessage()));
@@ -187,26 +138,33 @@ public final class GmCharacterCommands {
         }
     }
 
-    // ── /gm character set name ────────────────────────────────────────────────
+    // ── Set field ─────────────────────────────────────────────────────────────
 
-    private static int setName(CommandContext<ServerCommandSource> ctx) {
+    private static int setField(CommandContext<ServerCommandSource> ctx, String field) {
         try {
             ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
-            String name = StringArgumentType.getString(ctx, "name");
+            String value = ctx.getArgument(field.equals("name") || field.equals("bio")
+                    ? "name" : "value", String.class);
 
-            CharacterProfile profile = SecondDawnRP.CHARACTER_SERVICE.get(target.getUuid())
-                    .orElse(null);
+            PlayerProfile profile = SecondDawnRP.PROFILE_SERVICE.getLoaded(target.getUuid());
             if (profile == null) {
-                ctx.getSource().sendError(Text.literal("No active character found for " + target.getName().getString()));
+                ctx.getSource().sendError(Text.literal("Player not online or no profile loaded."));
                 return 0;
             }
-            profile.setCharacterName(name);
-            SecondDawnRP.CHARACTER_SERVICE.onPlayerLeave(target.getUuid()); // triggers save
-            SecondDawnRP.CHARACTER_SERVICE.onPlayerJoin(target);            // reload
+
+            switch (field) {
+                case "name"       -> profile.setCharacterName(value);
+                case "bio"        -> profile.setBio(value);
+                case "species"    -> profile.setSpecies(value);
+                case "permadeath" -> profile.setPermadeathConsent(Boolean.parseBoolean(value));
+            }
+
+            // Mark dirty so it saves on next cycle
+            SecondDawnRP.PROFILE_MANAGER.markDirty(target.getUuid());
 
             ctx.getSource().sendFeedback(
-                    () -> Text.literal("[Character] Name updated to: " + name)
-                            .formatted(Formatting.GREEN), true);
+                    () -> Text.literal("[Character] " + field + " updated for "
+                            + target.getName().getString()).formatted(Formatting.GREEN), true);
             return 1;
         } catch (Exception e) {
             ctx.getSource().sendError(Text.literal("Error: " + e.getMessage()));
@@ -214,102 +172,23 @@ public final class GmCharacterCommands {
         }
     }
 
-    // ── /gm character set bio ─────────────────────────────────────────────────
-
-    private static int setBio(CommandContext<ServerCommandSource> ctx) {
-        try {
-            ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
-            String bio = StringArgumentType.getString(ctx, "bio");
-
-            CharacterProfile profile = SecondDawnRP.CHARACTER_SERVICE.get(target.getUuid())
-                    .orElse(null);
-            if (profile == null) {
-                ctx.getSource().sendError(Text.literal("No active character."));
-                return 0;
-            }
-            profile.setBio(bio);
-            ctx.getSource().sendFeedback(
-                    () -> Text.literal("[Character] Bio updated.").formatted(Formatting.GREEN), true);
-            return 1;
-        } catch (Exception e) {
-            ctx.getSource().sendError(Text.literal("Error: " + e.getMessage()));
-            return 0;
-        }
-    }
-
-    // ── /gm character set species ─────────────────────────────────────────────
-
-    private static int setSpecies(CommandContext<ServerCommandSource> ctx) {
-        try {
-            ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
-            String speciesId = StringArgumentType.getString(ctx, "speciesId");
-
-            CharacterProfile profile = SecondDawnRP.CHARACTER_SERVICE.get(target.getUuid())
-                    .orElse(null);
-            if (profile == null) {
-                ctx.getSource().sendError(Text.literal("No active character."));
-                return 0;
-            }
-            profile.setSpecies(speciesId);
-            ctx.getSource().sendFeedback(
-                    () -> Text.literal("[Character] Species set to: " + speciesId)
-                            .formatted(Formatting.GREEN), true);
-            return 1;
-        } catch (Exception e) {
-            ctx.getSource().sendError(Text.literal("Error: " + e.getMessage()));
-            return 0;
-        }
-    }
-
-    // ── /gm character set permadeath ──────────────────────────────────────────
-
-    private static int setPermadeath(CommandContext<ServerCommandSource> ctx) {
-        try {
-            ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
-            String valueStr = StringArgumentType.getString(ctx, "value");
-            boolean value   = valueStr.equalsIgnoreCase("true");
-
-            CharacterProfile profile = SecondDawnRP.CHARACTER_SERVICE.get(target.getUuid())
-                    .orElse(null);
-            if (profile == null) {
-                ctx.getSource().sendError(Text.literal("No active character."));
-                return 0;
-            }
-            profile.setPermadeathConsent(value);
-            ctx.getSource().sendFeedback(
-                    () -> Text.literal("[Character] Permadeath consent set to: " + value)
-                            .formatted(Formatting.GREEN), true);
-            return 1;
-        } catch (Exception e) {
-            ctx.getSource().sendError(Text.literal("Error: " + e.getMessage()));
-            return 0;
-        }
-    }
-
-    // ── /gm injury modify ────────────────────────────────────────────────────
+    // ── Injury modify ─────────────────────────────────────────────────────────
 
     private static int injuryModify(CommandContext<ServerCommandSource> ctx) {
         try {
             ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
             int days = IntegerArgumentType.getInteger(ctx, "days");
-
             SecondDawnRP.LONG_TERM_INJURY_SERVICE.adjustExpiry(target.getUuid(), days);
-
             String sign = days >= 0 ? "+" : "";
             ctx.getSource().sendFeedback(
-                    () -> Text.literal("[Injury] Expiry adjusted by " + sign + days
-                                    + " day(s) for " + target.getName().getString() + ".")
-                            .formatted(Formatting.GREEN),
-                    true // broadcast to ops log
-            );
+                    () -> Text.literal("[Injury] Expiry adjusted " + sign + days + " day(s) for "
+                            + target.getName().getString()).formatted(Formatting.GREEN), true);
             return 1;
         } catch (Exception e) {
             ctx.getSource().sendError(Text.literal("Error: " + e.getMessage()));
             return 0;
         }
     }
-
-    // ── Internal ──────────────────────────────────────────────────────────────
 
     private record PendingKill(UUID targetUuid, float transferPercent, long createdAtMs) {
         PendingKill(UUID targetUuid, float transferPercent) {

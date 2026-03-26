@@ -7,6 +7,7 @@ import net.minecraft.util.Identifier;
 import net.shard.seconddawnrp.SecondDawnRP;
 import net.shard.seconddawnrp.degradation.item.ComponentRegistrationTool;
 import net.shard.seconddawnrp.degradation.item.EngineeringPadItem;
+import net.shard.seconddawnrp.dice.item.RpPaddItem;
 import net.shard.seconddawnrp.gmevent.item.*;
 import net.shard.seconddawnrp.tasksystem.pad.OperationsPadItem;
 import net.shard.seconddawnrp.tasksystem.pad.TaskPadItem;
@@ -86,6 +87,12 @@ public class ModItems {
             Registries.ITEM,
             Identifier.of(SecondDawnRP.MOD_ID, "anomaly_marker_tool"),
             new AnomalyMarkerToolItem(new Item.Settings().maxCount(1))
+    );
+
+    public static final Item RP_PADD = Registry.register(
+            Registries.ITEM,
+            Identifier.of(SecondDawnRP.MOD_ID, "rp_padd"),
+            new RpPaddItem(new Item.Settings().maxCount(1))
     );
 
     private static Item register(String id, Item item) {

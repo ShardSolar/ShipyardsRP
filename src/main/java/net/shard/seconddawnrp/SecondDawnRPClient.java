@@ -5,6 +5,8 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.gui.screen.ingame.HandledScreens;
 import net.shard.seconddawnrp.character.CharacterCreationClientHandler;
 import net.shard.seconddawnrp.degradation.client.ComponentWarningClientHandler;
+import net.shard.seconddawnrp.dice.network.SubmissionClientHandler;
+import net.shard.seconddawnrp.dice.screen.RpPaddClientHandler;
 import net.shard.seconddawnrp.gmevent.client.AnomalyClientHandler;
 import net.shard.seconddawnrp.gmevent.client.GmKeybindings;
 import net.shard.seconddawnrp.gmevent.client.GmKeyInputHandler;
@@ -40,6 +42,8 @@ public class SecondDawnRPClient implements ClientModInitializer {
         AnomalyClientHandler.register();
         CharacterCreationClientHandler.register();
         ComponentWarningClientHandler.registerLocateReceiver();
+        RpPaddClientHandler.register();
+        SubmissionClientHandler.register();
         // GM keybindings
         GmKeybindings.register();
         GmKeyInputHandler.register();

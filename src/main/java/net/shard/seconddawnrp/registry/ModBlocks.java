@@ -81,11 +81,22 @@ public final class ModBlocks {
                             .sounds(BlockSoundGroup.METAL)
                             .requiresTool()));
 
+    public static final Block SUBMISSION_BOX = register("submission_box",
+            new net.shard.seconddawnrp.dice.block.SubmissionBoxBlock(
+                    AbstractBlock.Settings.create()
+                            .mapColor(MapColor.IRON_GRAY)
+                            .strength(3.0f, 6.0f)
+                            .sounds(BlockSoundGroup.METAL)
+                            .requiresTool()));
+
     // ── Block entity types ────────────────────────────────────────────────────
 
     public static BlockEntityType<WarpCoreControllerBlockEntity> WARP_CORE_CONTROLLER_ENTITY;
     public static BlockEntityType<net.shard.seconddawnrp.character.CharacterCreationTerminalBlock
             .CharacterCreationTerminalBlockEntity> CHARACTER_CREATION_TERMINAL_ENTITY;
+    public static BlockEntityType<net.shard.seconddawnrp.dice.block.SubmissionBoxBlock
+            .SubmissionBoxBlockEntity> SUBMISSION_BOX_ENTITY;
+
     // ── Registration ──────────────────────────────────────────────────────────
 
     public static void register() {
@@ -108,6 +119,18 @@ public final class ModBlocks {
                                         .CharacterCreationTerminalBlockEntity(pos, state),
                         CHARACTER_CREATION_TERMINAL).build()
         );
+
+        SUBMISSION_BOX_ENTITY = Registry.register(
+                Registries.BLOCK_ENTITY_TYPE,
+                Identifier.of(SecondDawnRP.MOD_ID, "submission_box"),
+                BlockEntityType.Builder.create(
+                        (pos, state) ->
+                                new net.shard.seconddawnrp.dice.block.SubmissionBoxBlock
+                                        .SubmissionBoxBlockEntity(pos, state),
+                        SUBMISSION_BOX).build()
+        );
+        net.shard.seconddawnrp.dice.block.SubmissionBoxBlock
+                .SubmissionBoxBlockEntity.TYPE = SUBMISSION_BOX_ENTITY;
 
         net.shard.seconddawnrp.character.CharacterCreationTerminalBlock
                 .CharacterCreationTerminalBlockEntity.TYPE = CHARACTER_CREATION_TERMINAL_ENTITY;

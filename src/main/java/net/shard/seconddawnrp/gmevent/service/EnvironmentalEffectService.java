@@ -11,10 +11,9 @@ import net.minecraft.util.math.BlockPos;
 import net.shard.seconddawnrp.SecondDawnRP;
 import net.shard.seconddawnrp.character.MedicalCondition;
 import net.shard.seconddawnrp.gmevent.data.EnvFireMode;
-import net.shard.seconddawnrp.gmevent.data.EnvVisibility;
 import net.shard.seconddawnrp.gmevent.data.EnvironmentalEffectEntry;
-import net.shard.seconddawnrp.gmevent.data.LingerMode;
 import net.shard.seconddawnrp.gmevent.repository.JsonEnvironmentalEffectRepository;
+import net.shard.seconddawnrp.playerdata.PlayerProfile;
 
 import java.util.*;
 
@@ -33,21 +32,9 @@ public class EnvironmentalEffectService {
 
     private final JsonEnvironmentalEffectRepository repository;
 
-    /** entryId → entry */
     private final Map<String, EnvironmentalEffectEntry> entries = new LinkedHashMap<>();
-
-    /**
-     * Per-player, per-entry tracking.
-     * Key: entryId + ":" + playerUuid
-     * Value: tick timestamp of last effect application (for ON_ENTRY cooldown)
-     *        or linger expiry tick (for LINGER mode after exit)
-     */
     private final Map<String, Long> playerEntryTimestamps = new HashMap<>();
-
-    /** Players currently in radius of each entry. Key: entryId, Value: set of UUIDs. */
     private final Map<String, Set<UUID>> playersInRadius = new HashMap<>();
-
-    /** Linger expiry ticks. Key: entryId:playerUuid, Value: server tick when linger expires. */
     private final Map<String, Long> lingerExpiry = new HashMap<>();
 
     private long serverTick = 0;
@@ -91,7 +78,6 @@ public class EnvironmentalEffectService {
                 if (entry.getFireMode() == EnvFireMode.ON_ENTRY) {
                     Set<UUID> wasIn = playersInRadius.getOrDefault(entry.getEntryId(), Set.of());
                     if (wasIn.contains(player.getUuid())) {
-                        // Already in radius — check cooldown
                         long lastApplied = playerEntryTimestamps.getOrDefault(key, 0L);
                         if (serverTick - lastApplied < entry.getOnEntryCooldownTicks()) continue;
                     }
@@ -99,7 +85,7 @@ public class EnvironmentalEffectService {
                 }
 
                 applyEffects(player, entry);
-                lingerExpiry.remove(key); // reset linger while still in radius
+                lingerExpiry.remove(key);
             }
 
             // Handle players who left radius
@@ -121,13 +107,11 @@ public class EnvironmentalEffectService {
                             clearEffectsForPlayer(server, uuid, entry);
                             lingerExpiry.remove(key);
                         } else {
-                            // Still lingering — reapply so effects don't expire naturally
                             ServerPlayerEntity player = server.getPlayerManager().getPlayer(uuid);
                             if (player != null) applyEffects(player, entry);
                         }
                     }
                     case PERSISTENT -> {
-                        // Effect stays — reapply so vanilla effects don't expire
                         ServerPlayerEntity player = server.getPlayerManager().getPlayer(uuid);
                         if (player != null) applyEffects(player, entry);
                     }
@@ -141,23 +125,23 @@ public class EnvironmentalEffectService {
     // ── Effect application ────────────────────────────────────────────────────
 
     private void applyEffects(ServerPlayerEntity player, EnvironmentalEffectEntry entry) {
-        // Vanilla effects
+        // Vanilla status effects
         for (String effectStr : entry.getVanillaEffects()) {
             applyVanillaEffect(player, effectStr);
         }
 
-        // Medical condition
-        if (entry.getMedicalConditionId() != null && SecondDawnRP.CHARACTER_SERVICE != null) {
-            if (!SecondDawnRP.CHARACTER_SERVICE.get(player.getUuid())
-                    .map(p -> p.hasCondition(entry.getMedicalConditionId()))
-                    .orElse(false)) {
-                SecondDawnRP.CHARACTER_SERVICE.applyCondition(
+        // Medical condition — now goes through PROFILE_SERVICE/PROFILE_MANAGER
+        if (entry.getMedicalConditionId() != null && SecondDawnRP.PROFILE_MANAGER != null) {
+            PlayerProfile profile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(player.getUuid());
+            if (profile != null && !profile.hasCondition(entry.getMedicalConditionId())) {
+                SecondDawnRP.PROFILE_SERVICE.applyCondition(
                         player.getUuid(),
                         new MedicalCondition(
                                 entry.getMedicalConditionId(),
                                 entry.getMedicalConditionSeverity(),
                                 System.currentTimeMillis(),
-                                "Environmental hazard at " + BlockPos.fromLong(entry.getBlockPosLong())
+                                "Environmental hazard at "
+                                        + BlockPos.fromLong(entry.getBlockPosLong())
                         )
                 );
             }
@@ -168,13 +152,11 @@ public class EnvironmentalEffectService {
         // Format: "minecraft:effect_name:amplifier:durationTicks"
         String[] parts = effectStr.split(":");
         if (parts.length < 2) return;
-        String namespace = parts[0];
-        String path = parts[1];
         int amplifier = parts.length > 2 ? parseInt(parts[2], 0) : 0;
         int duration  = parts.length > 3 ? parseInt(parts[3], 200) : 200;
 
         StatusEffect effect = Registries.STATUS_EFFECT
-                .get(Identifier.of(namespace, path));
+                .get(Identifier.of(parts[0], parts[1]));
         if (effect == null) return;
         player.addStatusEffect(new StatusEffectInstance(
                 Registries.STATUS_EFFECT.getEntry(effect),
@@ -194,21 +176,21 @@ public class EnvironmentalEffectService {
             if (effect != null) player.removeStatusEffect(
                     Registries.STATUS_EFFECT.getEntry(effect));
         }
-
-        // Medical conditions stay on character unless explicitly cleared
-        // (LINGER and PERSISTENT conditions require Medical treatment)
+        // Medical conditions persist until treated — intentional
     }
 
     // ── Registration ──────────────────────────────────────────────────────────
 
     public EnvironmentalEffectEntry register(String worldKey, long blockPosLong, UUID registeredBy) {
         boolean exists = entries.values().stream()
-                .anyMatch(e -> e.getWorldKey().equals(worldKey) && e.getBlockPosLong() == blockPosLong);
+                .anyMatch(e -> e.getWorldKey().equals(worldKey)
+                        && e.getBlockPosLong() == blockPosLong);
         if (exists) throw new IllegalStateException("Already registered at this position.");
 
         String id = "env_" + Long.toHexString(blockPosLong & 0xFFFFFFL)
                 + "_" + Long.toHexString(System.currentTimeMillis() & 0xFFFFL);
-        EnvironmentalEffectEntry entry = new EnvironmentalEffectEntry(id, worldKey, blockPosLong, registeredBy);
+        EnvironmentalEffectEntry entry =
+                new EnvironmentalEffectEntry(id, worldKey, blockPosLong, registeredBy);
         entries.put(id, entry);
         repository.save(entries.values());
         return entry;
@@ -216,7 +198,8 @@ public class EnvironmentalEffectService {
 
     public boolean unregister(String worldKey, long blockPosLong) {
         Optional<EnvironmentalEffectEntry> opt = entries.values().stream()
-                .filter(e -> e.getWorldKey().equals(worldKey) && e.getBlockPosLong() == blockPosLong)
+                .filter(e -> e.getWorldKey().equals(worldKey)
+                        && e.getBlockPosLong() == blockPosLong)
                 .findFirst();
         if (opt.isEmpty()) return false;
         entries.remove(opt.get().getEntryId());
@@ -239,8 +222,8 @@ public class EnvironmentalEffectService {
 
     // ── Queries ───────────────────────────────────────────────────────────────
 
-    public Collection<EnvironmentalEffectEntry> getAll()           { return entries.values(); }
-    public Optional<EnvironmentalEffectEntry> getById(String id)   { return Optional.ofNullable(entries.get(id)); }
+    public Collection<EnvironmentalEffectEntry> getAll()         { return entries.values(); }
+    public Optional<EnvironmentalEffectEntry> getById(String id) { return Optional.ofNullable(entries.get(id)); }
 
     public Optional<EnvironmentalEffectEntry> getByPosition(String worldKey, long posLong) {
         return entries.values().stream()

@@ -35,6 +35,15 @@ import net.shard.seconddawnrp.degradation.network.LocateComponentS2CPacket;
 import net.shard.seconddawnrp.degradation.repository.DegradationConfigRepository;
 import net.shard.seconddawnrp.degradation.repository.JsonComponentRepository;
 import net.shard.seconddawnrp.degradation.service.DegradationService;
+import net.shard.seconddawnrp.dice.command.GmRollCommands;
+import net.shard.seconddawnrp.dice.command.RollCommands;
+import net.shard.seconddawnrp.dice.data.RollModifierConfig;
+import net.shard.seconddawnrp.dice.data.RpPaddSubmission;
+import net.shard.seconddawnrp.dice.item.RpPaddItem;
+import net.shard.seconddawnrp.dice.network.RpPaddNetworking;
+import net.shard.seconddawnrp.dice.service.RollService;
+import net.shard.seconddawnrp.dice.service.RpPaddService;
+import net.shard.seconddawnrp.dice.service.RpPaddSubmissionService;
 import net.shard.seconddawnrp.gmevent.client.AnomalyClientHandler;
 import net.shard.seconddawnrp.gmevent.command.GmAnomalyCommands;
 import net.shard.seconddawnrp.gmevent.command.GmEnvCommands;
@@ -113,17 +122,24 @@ public class SecondDawnRP implements ModInitializer {
     public static DegradationService DEGRADATION_SERVICE;
     public static WarpCoreService WARP_CORE_SERVICE;
 
-    // Phase 5.5 — full implementations replacing stubs
-    public static CharacterService CHARACTER_SERVICE;
+    // Character system
+    public static CharacterArchiveRepository CHARACTER_ARCHIVE;
     public static LongTermInjuryService LONG_TERM_INJURY_SERVICE;
     public static RdmDetectionService RDM_DETECTION_SERVICE;
+    public static SpeciesRegistry SPECIES_REGISTRY;
 
+    // Dice + RP PADD (Phase 6)
+    public static RollService ROLL_SERVICE;
+    public static RpPaddService RP_PADD_SERVICE;
+    public static RpPaddSubmissionService RP_PADD_SUBMISSION_SERVICE;
+    public static RpPaddItem RP_PADD_ITEM;  // cast reference for archive generation
+
+    // GM tools
     public static EnvironmentalEffectService ENV_EFFECT_SERVICE;
     public static TriggerService TRIGGER_SERVICE;
     public static GmRegistryService GM_REGISTRY_SERVICE;
     public static AnomalyService ANOMALY_SERVICE;
     public static GmToolVisibilityService GM_TOOL_VISIBILITY_SERVICE;
-    public static SpeciesRegistry SPECIES_REGISTRY;
 
     @Override
     public void onInitialize() {
@@ -131,6 +147,9 @@ public class SecondDawnRP implements ModInitializer {
         ModItems.register();
         ModBlocks.register();
         ModScreenHandlers.register();
+
+        // Capture RP_PADD_ITEM reference — needed for archive PADD generation in RpPaddSubmissionService
+        RP_PADD_ITEM = (RpPaddItem) ModItems.RP_PADD;
 
         ItemGroupEvents.modifyEntriesEvent(ItemGroups.TOOLS).register(entries -> {
             entries.add(ModItems.TASK_PAD);
@@ -152,8 +171,11 @@ public class SecondDawnRP implements ModInitializer {
             entries.add(Item.fromBlock(ModBlocks.POWER_RELAY));
             entries.add(Item.fromBlock(ModBlocks.FUEL_TANK));
             entries.add(ModItems.ANOMALY_MARKER_TOOL);
-            entries.add(ModBlocks.CHARACTER_CREATION_TERMINAL);
-
+            entries.add(Item.fromBlock(ModBlocks.CHARACTER_CREATION_TERMINAL));
+            entries.add(ModItems.RP_PADD);
+            entries.add(Item.fromBlock(ModBlocks.SUBMISSION_BOX));
+            entries.add(ModItems.SPAWN_ITEM_TOOL);
+            entries.add(ModItems.SPAWN_BLOCK_CONFIG_TOOL);
         });
 
         ItemGroup SecondDawnRP = Registry.register(
@@ -182,7 +204,9 @@ public class SecondDawnRP implements ModInitializer {
                             entries.add(Item.fromBlock(ModBlocks.POWER_RELAY));
                             entries.add(Item.fromBlock(ModBlocks.FUEL_TANK));
                             entries.add(ModItems.ANOMALY_MARKER_TOOL);
-                            entries.add(ModBlocks.CHARACTER_CREATION_TERMINAL);
+                            entries.add(Item.fromBlock(ModBlocks.CHARACTER_CREATION_TERMINAL));
+                            entries.add(ModItems.RP_PADD);
+                            entries.add(Item.fromBlock(ModBlocks.SUBMISSION_BOX));
                         })
                         .build()
         );
@@ -281,7 +305,6 @@ public class SecondDawnRP implements ModInitializer {
         new ComponentDamageListener().register();
         new ComponentBlockBreakListener().register();
 
-
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 EngineeringCommands.register(dispatcher, registryAccess, environment));
 
@@ -302,25 +325,51 @@ public class SecondDawnRP implements ModInitializer {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 WarpCoreCommands.register(dispatcher, registryAccess, environment));
 
-        // ── Character System (Phase 5.5 — full implementation) ────────────────
-        CharacterRepository characterRepository = new SqlCharacterRepository(DATABASE_MANAGER);
-        CHARACTER_SERVICE = new CharacterService(characterRepository);
-
+        // ── Character System ──────────────────────────────────────────────────
+        CHARACTER_ARCHIVE = new CharacterArchiveRepository(DATABASE_MANAGER);
         SPECIES_REGISTRY = new SpeciesRegistry();
+
+        LongTermInjuryRepository ltiRepository = new SqlLongTermInjuryRepository(DATABASE_MANAGER);
+        LONG_TERM_INJURY_SERVICE = new LongTermInjuryService(ltiRepository,
+                new LongTermInjuryService.ProfileLtiCallback() {
+                    @Override
+                    public void clearLongTermInjury(UUID playerUuid) {
+                        PlayerProfile p = PROFILE_MANAGER.getLoadedProfile(playerUuid);
+                        if (p != null) { p.setActiveLongTermInjuryId(null); PROFILE_MANAGER.markDirty(playerUuid); }
+                    }
+                    @Override
+                    public void setLongTermInjury(UUID playerUuid, String injuryId) {
+                        PlayerProfile p = PROFILE_MANAGER.getLoadedProfile(playerUuid);
+                        if (p != null) { p.setActiveLongTermInjuryId(injuryId); PROFILE_MANAGER.markDirty(playerUuid); }
+                    }
+                });
+
+        RDM_DETECTION_SERVICE = new RdmDetectionService(DATABASE_MANAGER);
 
         CharacterCreationNetworking.registerPayloads();
         CharacterCreationNetworking.registerServerReceivers();
 
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
-                CharacterCommand.register(dispatcher));
+                GmCharacterCommands.register(dispatcher));
 
-        LongTermInjuryRepository ltiRepository = new SqlLongTermInjuryRepository(DATABASE_MANAGER);
-        LONG_TERM_INJURY_SERVICE = new LongTermInjuryService(ltiRepository, characterRepository);
+        // ── Dice + RP PADD System (Phase 6) ──────────────────────────────────
+        RollModifierConfig rollModifierConfig = new RollModifierConfig(configDir);
 
-        RDM_DETECTION_SERVICE = new RdmDetectionService(DATABASE_MANAGER);
+        RP_PADD_SERVICE = new RpPaddService();
+        ROLL_SERVICE    = new RollService(rollModifierConfig);
+
+        RpPaddSubmission.Repository submissionRepo =
+                new RpPaddSubmission.Repository(DATABASE_MANAGER);
+        RP_PADD_SUBMISSION_SERVICE = new RpPaddSubmissionService(submissionRepo);
+
+        // All RP PADD + submission packets in one call
+        RpPaddNetworking.registerPayloads();
+        RpPaddNetworking.registerServerReceivers();
 
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
-                GmCharacterCommands.register(dispatcher));
+                RollCommands.register(dispatcher));
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                GmRollCommands.register(dispatcher));
 
         // ── GM Registry ───────────────────────────────────────────────────────
         GM_REGISTRY_SERVICE = new GmRegistryService(configDir);
@@ -356,13 +405,10 @@ public class SecondDawnRP implements ModInitializer {
                 GmTriggerCommands.register(dispatcher, registryAccess, environment));
 
         // ── Network payloads ──────────────────────────────────────────────────
-        PayloadTypeRegistry.playS2C().register(
-                OpenAnomalyConfigS2CPacket.ID, OpenAnomalyConfigS2CPacket.CODEC);
-        PayloadTypeRegistry.playC2S().register(
-                SaveAnomalyConfigC2SPacket.ID, SaveAnomalyConfigC2SPacket.CODEC);
+        PayloadTypeRegistry.playS2C().register(OpenAnomalyConfigS2CPacket.ID, OpenAnomalyConfigS2CPacket.CODEC);
+        PayloadTypeRegistry.playC2S().register(SaveAnomalyConfigC2SPacket.ID, SaveAnomalyConfigC2SPacket.CODEC);
         AnomalyClientHandler.registerServerReceiver();
-        PayloadTypeRegistry.playS2C().register(
-                LocateComponentS2CPacket.ID, LocateComponentS2CPacket.CODEC);
+        PayloadTypeRegistry.playS2C().register(LocateComponentS2CPacket.ID, LocateComponentS2CPacket.CODEC);
 
         // INTERACT mode trigger right-click hook
         UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
@@ -382,16 +428,21 @@ public class SecondDawnRP implements ModInitializer {
         ServerTickEvents.END_SERVER_TICK.register(server -> WARP_CORE_SERVICE.tick(server));
         ServerTickEvents.END_SERVER_TICK.register(server -> ENV_EFFECT_SERVICE.tick(server));
         ServerTickEvents.END_SERVER_TICK.register(server -> TRIGGER_SERVICE.tick(server));
-
-        // LTI tick — passes server tick count for interval check
         ServerTickEvents.END_SERVER_TICK.register(server ->
                 LONG_TERM_INJURY_SERVICE.tick(server, server.getTicks()));
-
-        // GM tool visibility poll every 10 ticks
+        ServerTickEvents.END_SERVER_TICK.register(server ->
+                ROLL_SERVICE.tick(server, server.getTicks()));
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             if (server.getTicks() % 10 != 0) return;
             for (var player : server.getPlayerManager().getPlayerList()) {
                 GM_TOOL_VISIBILITY_SERVICE.onEquip(player, player.getMainHandStack());
+            }
+        });
+        // Daily cleanup — purge resolved submissions older than 7 days
+        // 24h × 60min × 60sec × 20 ticks = 1,728,000 ticks
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (server.getTicks() % 1_728_000 == 0 && server.getTicks() > 0) {
+                RP_PADD_SUBMISSION_SERVICE.cleanup();
             }
         });
 
@@ -401,7 +452,7 @@ public class SecondDawnRP implements ModInitializer {
                 LuckPerms luckPerms = LuckPermsProvider.get();
                 LuckPermsGroupMapper groupMapper = new LuckPermsGroupMapper();
                 ProfileSyncService syncService = new LuckPermsSyncService(luckPerms, groupMapper);
-                PROFILE_SERVICE = new PlayerProfileService(PROFILE_MANAGER, syncService);
+                PROFILE_SERVICE.setProfileSyncService(syncService);
                 PERMISSION_SERVICE = new PermissionService(luckPerms);
                 TASK_PERMISSION_SERVICE = new TaskPermissionService(PERMISSION_SERVICE);
                 System.out.println("[SecondDawnRP] LuckPerms integration initialized.");
@@ -427,11 +478,14 @@ public class SecondDawnRP implements ModInitializer {
             ANOMALY_SERVICE.reload();
             SPECIES_REGISTRY.reload();
 
-            // Phase 5.5 — character services
             LONG_TERM_INJURY_SERVICE.setServer(server);
-            LONG_TERM_INJURY_SERVICE.reload(); // loads all active LTIs into cache
-
+            LONG_TERM_INJURY_SERVICE.reload();
             RDM_DETECTION_SERVICE.setServer(server);
+
+            // Dice — load config and inject server reference
+            rollModifierConfig.load();
+            ROLL_SERVICE.setServer(server);
+            RP_PADD_SUBMISSION_SERVICE.setServer(server);
         });
 
         // ── Player join ───────────────────────────────────────────────────────
@@ -439,22 +493,14 @@ public class SecondDawnRP implements ModInitializer {
             PlayerProfile profile = PROFILE_SERVICE.getOrLoad(handler.getPlayer());
             TASK_SERVICE.loadTaskState(profile);
             PROFILE_SERVICE.syncAll(handler.getPlayer());
-
-            // Phase 5.5: full persistence — replaces getOrCreate stub
-            CHARACTER_SERVICE.onPlayerJoin(handler.getPlayer());
             LONG_TERM_INJURY_SERVICE.onPlayerJoin(handler.getPlayer());
         });
 
         // ── Player disconnect ─────────────────────────────────────────────────
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             UUID playerUuid = handler.getPlayer().getUuid();
-
             PlayerProfile profile = PROFILE_MANAGER.getLoadedProfile(playerUuid);
-            if (profile != null) {
-                TASK_SERVICE.saveTaskState(profile);
-            }
-
-            CHARACTER_SERVICE.onPlayerLeave(playerUuid);
+            if (profile != null) TASK_SERVICE.saveTaskState(profile);
             LONG_TERM_INJURY_SERVICE.onPlayerLeave(playerUuid);
             PROFILE_MANAGER.unloadProfile(playerUuid);
         });
@@ -471,14 +517,10 @@ public class SecondDawnRP implements ModInitializer {
             DEGRADATION_SERVICE.saveAll();
             PROFILE_MANAGER.saveAll();
             ANOMALY_SERVICE.saveAll();
-            CHARACTER_SERVICE.saveAll(); // Phase 5.5
 
             if (DATABASE_MANAGER != null) {
-                try {
-                    DATABASE_MANAGER.close();
-                } catch (Exception e) {
-                    throw new RuntimeException("Failed to close database manager", e);
-                }
+                try { DATABASE_MANAGER.close(); }
+                catch (Exception e) { throw new RuntimeException("Failed to close database manager", e); }
             }
         });
     }

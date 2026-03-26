@@ -8,13 +8,10 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 import net.shard.seconddawnrp.SecondDawnRP;
+import net.shard.seconddawnrp.playerdata.PlayerProfile;
 
 /**
  * Sent client → server when the player confirms their character creation form.
- *
- * <p>Server validates: name not blank, species exists in registry,
- * bio within length limit. If validation passes, calls
- * {@link CharacterService#completeCreation}.
  */
 public record SaveCharacterCreationC2SPacket(
         String characterName,
@@ -36,10 +33,7 @@ public record SaveCharacterCreationC2SPacket(
                         buf.writeString(value.bio());
                     },
                     buf -> new SaveCharacterCreationC2SPacket(
-                            buf.readString(),
-                            buf.readString(),
-                            buf.readString()
-                    )
+                            buf.readString(), buf.readString(), buf.readString())
             );
 
     @Override
@@ -52,55 +46,49 @@ public record SaveCharacterCreationC2SPacket(
         String species = packet.speciesId().trim();
         String bio     = packet.bio().trim();
 
-        // ── Validation ────────────────────────────────────────────────────────
+        // Validation
         if (name.isBlank()) {
-            player.sendMessage(Text.literal("[Character] Name cannot be blank.")
-                    .formatted(Formatting.RED), false);
+            player.sendMessage(Text.literal("[Character] Name cannot be blank.").formatted(Formatting.RED), false);
             return;
         }
         if (name.length() > MAX_NAME_LENGTH) {
-            player.sendMessage(Text.literal("[Character] Name too long (max "
-                    + MAX_NAME_LENGTH + " characters).").formatted(Formatting.RED), false);
+            player.sendMessage(Text.literal("[Character] Name too long (max " + MAX_NAME_LENGTH + ").").formatted(Formatting.RED), false);
             return;
         }
         if (species.isBlank()) {
-            player.sendMessage(Text.literal("[Character] You must select a species.")
-                    .formatted(Formatting.RED), false);
+            player.sendMessage(Text.literal("[Character] You must select a species.").formatted(Formatting.RED), false);
             return;
         }
         if (!SecondDawnRP.SPECIES_REGISTRY.exists(species)) {
-            player.sendMessage(Text.literal("[Character] Unknown species: " + species)
-                    .formatted(Formatting.RED), false);
+            player.sendMessage(Text.literal("[Character] Unknown species: " + species).formatted(Formatting.RED), false);
             return;
         }
         if (bio.length() > MAX_BIO_LENGTH) {
-            player.sendMessage(Text.literal("[Character] Bio too long (max "
-                    + MAX_BIO_LENGTH + " characters).").formatted(Formatting.RED), false);
+            player.sendMessage(Text.literal("[Character] Bio too long (max " + MAX_BIO_LENGTH + ").").formatted(Formatting.RED), false);
             return;
         }
 
-        // ── Check if species already locked ───────────────────────────────────
-        CharacterProfile existing = SecondDawnRP.CHARACTER_SERVICE
-                .get(player.getUuid()).orElse(null);
-        if (existing != null
-                && existing.getSpecies() != null
-                && !existing.getSpecies().isBlank()
-                && !existing.getSpecies().equals(species)) {
+        // Check species lock — species cannot change after first set (GM override only)
+        PlayerProfile profile = SecondDawnRP.PROFILE_SERVICE.getLoaded(player.getUuid());
+        if (profile != null
+                && profile.getSpecies() != null
+                && !profile.getSpecies().isBlank()
+                && !profile.getSpecies().equals(species)) {
             player.sendMessage(Text.literal(
                             "[Character] Species is locked after creation. A GM can override this.")
                     .formatted(Formatting.RED), false);
             return;
         }
 
-        // ── Apply ─────────────────────────────────────────────────────────────
-        boolean success = SecondDawnRP.CHARACTER_SERVICE
-                .completeCreation(player.getUuid(), name, species, bio);
+        // Apply via PROFILE_SERVICE
+        boolean success = SecondDawnRP.PROFILE_SERVICE.completeCreation(
+                player.getUuid(), name, species, bio);
 
         if (success) {
-            // Seed starting languages from species definition
+            // Seed starting languages from species registry
             SecondDawnRP.SPECIES_REGISTRY.get(species).ifPresent(def -> {
                 for (String langId : def.getStartingLanguages()) {
-                    SecondDawnRP.CHARACTER_SERVICE.grantLanguage(player.getUuid(), langId);
+                    SecondDawnRP.PROFILE_SERVICE.grantLanguage(player.getUuid(), langId);
                 }
             });
 
@@ -112,9 +100,7 @@ public record SaveCharacterCreationC2SPacket(
                     false
             );
         } else {
-            player.sendMessage(Text.literal(
-                            "[Character] Failed to save character. Contact an admin.")
-                    .formatted(Formatting.RED), false);
+            player.sendMessage(Text.literal("[Character] Failed to save. Contact an admin.").formatted(Formatting.RED), false);
         }
     }
 }

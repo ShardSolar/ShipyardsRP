@@ -9,6 +9,10 @@
   "item.seconddawnrp.trigger_tool": "Trigger Tool",
   "item.seconddawnrp.environmental_effect_tool": "Environmental Effect Tool",
   "item.seconddawnrp.anomaly_marker_tool": "Anomaly Marker Tool",
+  "item.seconddawnrp.spawn_block_config_tool": "Spawn Block Config Tool",
+  "item.seconddawnrp.spawn_item_tool": "Spawn Item Tool",
+  "item.seconddawnrp.rp_padd": "Recording Pad",
+
 
 
 
@@ -23,5 +27,6 @@
   "block.seconddawnrp.warp_core_controller": "Warp Core Controller",
   "block.seconddawnrp.conduit":              "Conduit",
   "block.seconddawnrp.power_relay":          "Power Relay",
-  "block.seconddawnrp.fuel_tank":            "Fuel Tank"
+  "block.seconddawnrp.fuel_tank":            "Fuel Tank",
+  "block.seconddawnrp.submission_box":     "Submission Box"
 }
