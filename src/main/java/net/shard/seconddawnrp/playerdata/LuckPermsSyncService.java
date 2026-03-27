@@ -21,6 +21,10 @@ public class LuckPermsSyncService implements ProfileSyncService {
         this.groupMapper = groupMapper;
     }
 
+    public static LuckPermsSyncService create(Object luckPerms, LuckPermsGroupMapper groupMapper) {
+        return new LuckPermsSyncService((LuckPerms) luckPerms, groupMapper);
+    }
+
     @Override
     public CompletableFuture<Void> syncProfile(ServerPlayerEntity player, PlayerProfile profile) {
         return loadUser(player.getUuid()).thenAccept(user -> {
@@ -51,9 +55,8 @@ public class LuckPermsSyncService implements ProfileSyncService {
     @Override
     public CompletableFuture<Void> syncBillet(ServerPlayerEntity player, Billet billet) {
         return loadUser(player.getUuid()).thenAccept(user -> {
-            User liveUser = user;
-            liveUser.data().add(InheritanceNode.builder(groupMapper.getBilletGroup(billet)).build());
-            luckPerms.getUserManager().saveUser(liveUser);
+            user.data().add(InheritanceNode.builder(groupMapper.getBilletGroup(billet)).build());
+            luckPerms.getUserManager().saveUser(user);
         });
     }
 

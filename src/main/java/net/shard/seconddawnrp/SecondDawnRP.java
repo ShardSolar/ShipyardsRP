@@ -9,8 +9,7 @@ import net.fabricmc.fabric.api.itemgroup.v1.FabricItemGroup;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
-import net.luckperms.api.LuckPerms;
-import net.luckperms.api.LuckPermsProvider;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.item.*;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
@@ -61,7 +60,9 @@ import net.shard.seconddawnrp.gmevent.repository.*;
 import net.shard.seconddawnrp.gmevent.service.*;
 import net.shard.seconddawnrp.playerdata.DefaultProfileFactory;
 import net.shard.seconddawnrp.playerdata.LuckPermsGroupMapper;
+import net.shard.seconddawnrp.playerdata.LuckPermsPermissionService;
 import net.shard.seconddawnrp.playerdata.LuckPermsSyncService;
+import net.shard.seconddawnrp.playerdata.NoOpPermissionService;
 import net.shard.seconddawnrp.playerdata.NoOpProfileSyncService;
 import net.shard.seconddawnrp.playerdata.PermissionService;
 import net.shard.seconddawnrp.playerdata.PlayerProfile;
@@ -107,8 +108,6 @@ public class SecondDawnRP implements ModInitializer {
 
     public static final String MOD_ID = "seconddawnrp";
 
-    // ── Singletons ────────────────────────────────────────────────────────────
-
     public static DatabaseManager DATABASE_MANAGER;
     public static PlayerProfileManager PROFILE_MANAGER;
     public static PlayerProfileService PROFILE_SERVICE;
@@ -122,19 +121,16 @@ public class SecondDawnRP implements ModInitializer {
     public static DegradationService DEGRADATION_SERVICE;
     public static WarpCoreService WARP_CORE_SERVICE;
 
-    // Character system
     public static CharacterArchiveRepository CHARACTER_ARCHIVE;
     public static LongTermInjuryService LONG_TERM_INJURY_SERVICE;
     public static RdmDetectionService RDM_DETECTION_SERVICE;
     public static SpeciesRegistry SPECIES_REGISTRY;
 
-    // Dice + RP PADD (Phase 6)
     public static RollService ROLL_SERVICE;
     public static RpPaddService RP_PADD_SERVICE;
     public static RpPaddSubmissionService RP_PADD_SUBMISSION_SERVICE;
-    public static RpPaddItem RP_PADD_ITEM;  // cast reference for archive generation
+    public static RpPaddItem RP_PADD_ITEM;
 
-    // GM tools
     public static EnvironmentalEffectService ENV_EFFECT_SERVICE;
     public static TriggerService TRIGGER_SERVICE;
     public static GmRegistryService GM_REGISTRY_SERVICE;
@@ -148,7 +144,6 @@ public class SecondDawnRP implements ModInitializer {
         ModBlocks.register();
         ModScreenHandlers.register();
 
-        // Capture RP_PADD_ITEM reference — needed for archive PADD generation in RpPaddSubmissionService
         RP_PADD_ITEM = (RpPaddItem) ModItems.RP_PADD;
 
         ItemGroupEvents.modifyEntriesEvent(ItemGroups.TOOLS).register(entries -> {
@@ -178,7 +173,7 @@ public class SecondDawnRP implements ModInitializer {
             entries.add(ModItems.SPAWN_BLOCK_CONFIG_TOOL);
         });
 
-        ItemGroup SecondDawnRP = Registry.register(
+        ItemGroup secondDawnRPGroup = Registry.register(
                 Registries.ITEM_GROUP,
                 Identifier.of(net.shard.seconddawnrp.SecondDawnRP.MOD_ID, "00seconddawnrp"),
                 FabricItemGroup.builder()
@@ -215,7 +210,6 @@ public class SecondDawnRP implements ModInitializer {
 
         Path configDir = Path.of("config");
 
-        // ── Database ──────────────────────────────────────────────────────────
         DatabaseConfig databaseConfig = new DatabaseConfig(configDir);
         DATABASE_MANAGER = new DatabaseManager(databaseConfig);
         try {
@@ -225,7 +219,6 @@ public class SecondDawnRP implements ModInitializer {
             throw new RuntimeException("Failed to initialize database infrastructure", e);
         }
 
-        // ── Repositories ──────────────────────────────────────────────────────
         ProfileRepository profileRepository = new SqlProfileRepository(DATABASE_MANAGER);
 
         JsonTaskStateRepository jsonTaskStateRepository = new JsonTaskStateRepository(configDir);
@@ -238,11 +231,10 @@ public class SecondDawnRP implements ModInitializer {
         catch (Exception e) { throw new RuntimeException("Failed to initialize JSON ops pool backup", e); }
         OpsTaskPoolRepository opsTaskPoolRepository = new SqlOpsTaskPoolRepository(DATABASE_MANAGER);
 
-        // ── Profile and task services ─────────────────────────────────────────
         DefaultProfileFactory defaultProfileFactory = new DefaultProfileFactory();
         PROFILE_MANAGER = new PlayerProfileManager(profileRepository, defaultProfileFactory);
         PROFILE_SERVICE = new PlayerProfileService(PROFILE_MANAGER, new NoOpProfileSyncService());
-        PERMISSION_SERVICE = new PermissionService(null);
+        PERMISSION_SERVICE = new NoOpPermissionService();
         TASK_PERMISSION_SERVICE = new TaskPermissionService(PERMISSION_SERVICE);
         TaskRegistry.bootstrap();
         TASK_REWARD_SERVICE = new TaskRewardService();
@@ -257,7 +249,6 @@ public class SecondDawnRP implements ModInitializer {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 TaskCommands.register(dispatcher, PROFILE_MANAGER, TASK_SERVICE));
 
-        // ── Terminals ─────────────────────────────────────────────────────────
         JsonTaskTerminalRepository jsonTaskTerminalRepository = new JsonTaskTerminalRepository(configDir);
         try { jsonTaskTerminalRepository.init(); }
         catch (Exception e) { throw new RuntimeException("Failed to initialize JSON terminal backup", e); }
@@ -265,7 +256,6 @@ public class SecondDawnRP implements ModInitializer {
         TERMINAL_MANAGER = new TaskTerminalManager(taskTerminalRepository, TASK_SERVICE, PROFILE_MANAGER);
         new TerminalInteractListener(TERMINAL_MANAGER).register();
 
-        // ── GM Event System ───────────────────────────────────────────────────
         JsonEncounterTemplateRepository templateRepo = new JsonEncounterTemplateRepository(configDir);
         try { templateRepo.init(); }
         catch (Exception e) { throw new RuntimeException("Failed to initialize encounter template repository", e); }
@@ -289,7 +279,6 @@ public class SecondDawnRP implements ModInitializer {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 GmEventCommands.register(dispatcher));
 
-        // ── Engineering Degradation ───────────────────────────────────────────
         DegradationConfigRepository degradationConfigRepo = new DegradationConfigRepository(configDir);
         try { degradationConfigRepo.init(); }
         catch (Exception e) { throw new RuntimeException("Failed to initialize degradation config", e); }
@@ -310,7 +299,6 @@ public class SecondDawnRP implements ModInitializer {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 EngineeringCommands.register(dispatcher, registryAccess, environment));
 
-        // ── Warp Core ─────────────────────────────────────────────────────────
         WarpCoreConfigRepository warpCoreConfigRepo = new WarpCoreConfigRepository(configDir);
         try { warpCoreConfigRepo.init(); }
         catch (Exception e) { throw new RuntimeException("Failed to initialize warp core config", e); }
@@ -327,7 +315,6 @@ public class SecondDawnRP implements ModInitializer {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 WarpCoreCommands.register(dispatcher, registryAccess, environment));
 
-        // ── Character System ──────────────────────────────────────────────────
         CHARACTER_ARCHIVE = new CharacterArchiveRepository(DATABASE_MANAGER);
         SPECIES_REGISTRY = new SpeciesRegistry();
 
@@ -354,7 +341,6 @@ public class SecondDawnRP implements ModInitializer {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 GmCharacterCommands.register(dispatcher));
 
-        // ── Dice + RP PADD System (Phase 6) ──────────────────────────────────
         RollModifierConfig rollModifierConfig = new RollModifierConfig(configDir);
 
         RP_PADD_SERVICE = new RpPaddService();
@@ -364,7 +350,6 @@ public class SecondDawnRP implements ModInitializer {
                 new RpPaddSubmission.Repository(DATABASE_MANAGER);
         RP_PADD_SUBMISSION_SERVICE = new RpPaddSubmissionService(submissionRepo);
 
-        // All RP PADD + submission packets in one call
         RpPaddNetworking.registerPayloads();
         RpPaddNetworking.registerServerReceivers();
 
@@ -373,10 +358,8 @@ public class SecondDawnRP implements ModInitializer {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 GmRollCommands.register(dispatcher));
 
-        // ── GM Registry ───────────────────────────────────────────────────────
         GM_REGISTRY_SERVICE = new GmRegistryService(configDir);
 
-        // ── Environmental Effect System ───────────────────────────────────────
         JsonEnvironmentalEffectRepository envRepo = new JsonEnvironmentalEffectRepository(configDir);
         try { envRepo.init(); }
         catch (Exception e) { throw new RuntimeException("Failed to initialize env effect repository", e); }
@@ -388,13 +371,11 @@ public class SecondDawnRP implements ModInitializer {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 GmEnvCommands.register(dispatcher, registryAccess, environment));
 
-        // ── Trigger Block System ──────────────────────────────────────────────
         JsonTriggerRepository triggerRepo = new JsonTriggerRepository(configDir);
         try { triggerRepo.init(); }
         catch (Exception e) { throw new RuntimeException("Failed to initialize trigger repository", e); }
         TRIGGER_SERVICE = new TriggerService(triggerRepo);
 
-        // ── Anomaly Marker System ─────────────────────────────────────────────
         JsonAnomalyRepository anomalyRepo = new JsonAnomalyRepository(configDir);
         try { anomalyRepo.init(); }
         catch (Exception e) { throw new RuntimeException("Failed to initialize anomaly repository", e); }
@@ -406,13 +387,11 @@ public class SecondDawnRP implements ModInitializer {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 GmTriggerCommands.register(dispatcher, registryAccess, environment));
 
-        // ── Network payloads ──────────────────────────────────────────────────
         PayloadTypeRegistry.playS2C().register(OpenAnomalyConfigS2CPacket.ID, OpenAnomalyConfigS2CPacket.CODEC);
         PayloadTypeRegistry.playC2S().register(SaveAnomalyConfigC2SPacket.ID, SaveAnomalyConfigC2SPacket.CODEC);
         AnomalyClientHandler.registerServerReceiver();
         PayloadTypeRegistry.playS2C().register(LocateComponentS2CPacket.ID, LocateComponentS2CPacket.CODEC);
 
-        // INTERACT mode trigger right-click hook
         UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
             if (world.isClient()) return ActionResult.PASS;
             if (!(player instanceof ServerPlayerEntity sp)) return ActionResult.PASS;
@@ -424,7 +403,6 @@ public class SecondDawnRP implements ModInitializer {
                     .orElse(ActionResult.PASS);
         });
 
-        // ── Server tick ───────────────────────────────────────────────────────
         ServerTickEvents.END_SERVER_TICK.register(server -> GM_EVENT_SERVICE.tick(server));
         ServerTickEvents.END_SERVER_TICK.register(server -> DEGRADATION_SERVICE.tick(server));
         ServerTickEvents.END_SERVER_TICK.register(server -> WARP_CORE_SERVICE.tick(server));
@@ -440,26 +418,36 @@ public class SecondDawnRP implements ModInitializer {
                 GM_TOOL_VISIBILITY_SERVICE.onEquip(player, player.getMainHandStack());
             }
         });
-        // Daily cleanup — purge resolved submissions older than 7 days
-        // 24h × 60min × 60sec × 20 ticks = 1,728,000 ticks
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             if (server.getTicks() % 1_728_000 == 0 && server.getTicks() > 0) {
                 RP_PADD_SUBMISSION_SERVICE.cleanup();
             }
         });
 
-        // ── Server started ────────────────────────────────────────────────────
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
-            try {
-                LuckPerms luckPerms = LuckPermsProvider.get();
-                LuckPermsGroupMapper groupMapper = new LuckPermsGroupMapper();
-                ProfileSyncService syncService = new LuckPermsSyncService(luckPerms, groupMapper);
-                PROFILE_SERVICE.setProfileSyncService(syncService);
-                PERMISSION_SERVICE = new PermissionService(luckPerms);
-                TASK_PERMISSION_SERVICE = new TaskPermissionService(PERMISSION_SERVICE);
-                System.out.println("[SecondDawnRP] LuckPerms integration initialized.");
-            } catch (Exception e) {
-                System.out.println("[SecondDawnRP] LuckPerms not ready - continuing without LP sync.");
+            PROFILE_SERVICE.setProfileSyncService(new NoOpProfileSyncService());
+            PERMISSION_SERVICE = new NoOpPermissionService();
+            TASK_PERMISSION_SERVICE = new TaskPermissionService(PERMISSION_SERVICE);
+
+            if (FabricLoader.getInstance().isModLoaded("luckperms")) {
+                try {
+                    Class<?> providerClass = Class.forName("net.luckperms.api.LuckPermsProvider");
+                    Object luckPerms = providerClass.getMethod("get").invoke(null);
+
+                    LuckPermsGroupMapper groupMapper = new LuckPermsGroupMapper();
+                    ProfileSyncService syncService = LuckPermsSyncService.create(luckPerms, groupMapper);
+
+                    PROFILE_SERVICE.setProfileSyncService(syncService);
+                    PERMISSION_SERVICE = LuckPermsPermissionService.create(luckPerms);
+                    TASK_PERMISSION_SERVICE = new TaskPermissionService(PERMISSION_SERVICE);
+
+                    System.out.println("[SecondDawnRP] LuckPerms integration initialized.");
+                } catch (Throwable t) {
+                    System.out.println("[SecondDawnRP] LuckPerms detected but unavailable - continuing without LP sync.");
+                    t.printStackTrace();
+                }
+            } else {
+                System.out.println("[SecondDawnRP] LuckPerms not installed - continuing without LP sync.");
             }
 
             try { TaskJsonLoader.load(server.getResourceManager()); }
@@ -484,13 +472,11 @@ public class SecondDawnRP implements ModInitializer {
             LONG_TERM_INJURY_SERVICE.reload();
             RDM_DETECTION_SERVICE.setServer(server);
 
-            // Dice — load config and inject server reference
             rollModifierConfig.load();
             ROLL_SERVICE.setServer(server);
             RP_PADD_SUBMISSION_SERVICE.setServer(server);
         });
 
-        // ── Player join ───────────────────────────────────────────────────────
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             PlayerProfile profile = PROFILE_SERVICE.getOrLoad(handler.getPlayer());
             TASK_SERVICE.loadTaskState(profile);
@@ -498,7 +484,6 @@ public class SecondDawnRP implements ModInitializer {
             LONG_TERM_INJURY_SERVICE.onPlayerJoin(handler.getPlayer());
         });
 
-        // ── Player disconnect ─────────────────────────────────────────────────
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             UUID playerUuid = handler.getPlayer().getUuid();
             PlayerProfile profile = PROFILE_MANAGER.getLoadedProfile(playerUuid);
@@ -507,7 +492,6 @@ public class SecondDawnRP implements ModInitializer {
             PROFILE_MANAGER.unloadProfile(playerUuid);
         });
 
-        // ── Server stopping ───────────────────────────────────────────────────
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
                 PlayerProfile profile = PROFILE_MANAGER.getLoadedProfile(player.getUuid());
