@@ -45,13 +45,6 @@ public class PlayerProfileService {
             profileManager.markDirty(player.getUuid());
         }
 
-        // Remind players who haven't completed creation
-        if (!profile.isCharacterCreationComplete()) {
-            player.sendMessage(
-                    Text.literal("[Character] Welcome! Visit the Character Creation Terminal "
-                                    + "to set your name, species, and biography.")
-                            .formatted(Formatting.GOLD), false);
-        }
 
         return profile;
     }

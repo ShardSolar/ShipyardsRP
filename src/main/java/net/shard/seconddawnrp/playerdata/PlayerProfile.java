@@ -4,6 +4,7 @@ import net.shard.seconddawnrp.character.LongTermInjury;
 import net.shard.seconddawnrp.character.MedicalCondition;
 import net.shard.seconddawnrp.division.Division;
 import net.shard.seconddawnrp.division.Rank;
+import net.shard.seconddawnrp.progression.ShipPosition;
 import net.shard.seconddawnrp.tasksystem.data.ActiveTask;
 import net.shard.seconddawnrp.tasksystem.data.CompletedTaskRecord;
 
@@ -12,18 +13,17 @@ import java.util.*;
 /**
  * Single source of truth for everything about a player on Second Dawn RP.
  *
- * <p>Phase 5.5 merge: CharacterProfile fields are now inline here.
- * CharacterService is removed — all character logic lives in
- * {@link PlayerProfileService}.
+ * Phase 5.5 additions: mustang flag, shipPosition.
+ * Phase 5.5 merge: CharacterProfile fields are inline here.
  *
- * <p>Persisted via {@link net.shard.seconddawnrp.playerdata.persistence.SqlProfileRepository}.
+ * Persisted via SqlProfileRepository.
  */
 public class PlayerProfile {
 
     // ── Minecraft account identity ────────────────────────────────────────────
 
     private final UUID playerId;
-    private String serviceName;         // Minecraft username
+    private String serviceName;
 
     // ── Division / progression ────────────────────────────────────────────────
 
@@ -31,54 +31,45 @@ public class PlayerProfile {
     private ProgressionPath progressionPath;
     private Rank rank;
     private int rankPoints;
-    private long serviceRecord;         // lifetime points — never decreases
+    private long serviceRecord;
     private final Set<Billet> billets;
     private final Set<Certification> certifications;
     private DutyStatus dutyStatus;
     private UUID supervisorId;
 
+    // ── Phase 5.5 — Career path ───────────────────────────────────────────────
+
+    /**
+     * True if this player has ever crossed from enlisted to commissioned.
+     * Displayed as a notation in the Roster GUI. Never clears.
+     */
+    private boolean mustang;
+
+    /**
+     * Ship-wide command position — NONE, FIRST_OFFICER, or SECOND_OFFICER.
+     * Assigned by Captain or admin. Independent of rank.
+     */
+    private ShipPosition shipPosition;
+
     // ── Character identity (merged from CharacterProfile) ─────────────────────
 
-    /** This character's own UUID — distinct from the Minecraft account UUID. */
     private String characterId;
-
-    /** In-character name shown in chat, Roster GUI, /rp output. */
     private String characterName;
-
-    /** Species registry key — locked after creation (GM override via command). */
     private String species;
-
-    /** Freeform biography — editable at any time. */
     private String bio;
-
-    /** ACTIVE, DECEASED, or SPECTATOR. */
     private CharacterStatus characterStatus;
 
     // ── Language ──────────────────────────────────────────────────────────────
 
     private final List<String> knownLanguages;
-
-    /**
-     * Bypasses all language scrambling (spoken + written).
-     * Does NOT bypass Wordle for encrypted comms.
-     */
     private boolean universalTranslator;
 
     // ── Death / injury ────────────────────────────────────────────────────────
 
-    /** Player opted into death without per-case GM confirmation. */
     private boolean permadeathConsent;
-
-    /** ID of active {@link LongTermInjury} in long_term_injuries table, or null. */
     private String activeLongTermInjuryId;
-
-    /** Wall-clock timestamp of character death. Null if alive. */
     private Long deceasedAt;
-
-    /** Points carried forward from a previous deceased character. */
     private int progressionTransfer;
-
-    /** Wall-clock timestamp when current character was created. */
     private long characterCreatedAt;
 
     // ── Session-only medical conditions (not persisted) ───────────────────────
@@ -116,7 +107,10 @@ public class PlayerProfile {
             String activeLongTermInjuryId,
             Long deceasedAt,
             int progressionTransfer,
-            long characterCreatedAt
+            long characterCreatedAt,
+            // Phase 5.5 fields
+            boolean mustang,
+            ShipPosition shipPosition
     ) {
         this.playerId             = playerId;
         this.serviceName          = serviceName;
@@ -141,19 +135,16 @@ public class PlayerProfile {
         this.deceasedAt           = deceasedAt;
         this.progressionTransfer  = progressionTransfer;
         this.characterCreatedAt   = characterCreatedAt;
+        this.mustang              = mustang;
+        this.shipPosition         = shipPosition != null ? shipPosition : ShipPosition.NONE;
     }
 
     // ── Character helpers ─────────────────────────────────────────────────────
 
-    /**
-     * True if the player has completed the Character Creation Terminal.
-     * A fresh profile has species = null until creation is done.
-     */
     public boolean isCharacterCreationComplete() {
         return species != null && !species.isBlank();
     }
 
-    /** The display name to use in chat and GUIs — falls back to Minecraft name. */
     public String getDisplayName() {
         return (characterName != null && !characterName.isBlank()) ? characterName : serviceName;
     }
@@ -200,88 +191,96 @@ public class PlayerProfile {
     // ── Rank points ───────────────────────────────────────────────────────────
 
     public void addRankPoints(int amount) {
-        this.rankPoints   += amount;
-        this.serviceRecord += amount;   // service record always grows
+        this.rankPoints    += amount;
+        this.serviceRecord += amount;
     }
 
-    // ── Getters — account ─────────────────────────────────────────────────────
+    // ── Getters / setters — account ───────────────────────────────────────────
 
-    public UUID getPlayerId()               { return playerId; }
-    public String getServiceName()          { return serviceName; }
-    public void setServiceName(String n)    { this.serviceName = n; }
+    public UUID   getPlayerId()            { return playerId; }
+    public String getServiceName()         { return serviceName; }
+    public void   setServiceName(String n) { this.serviceName = n; }
 
-    // ── Getters — progression ─────────────────────────────────────────────────
+    // ── Getters / setters — progression ──────────────────────────────────────
 
-    public Division getDivision()           { return division; }
-    public void setDivision(Division d)     { this.division = d; }
+    public Division getDivision()          { return division; }
+    public void setDivision(Division d)    { this.division = d; }
 
-    public ProgressionPath getProgressionPath()             { return progressionPath; }
-    public void setProgressionPath(ProgressionPath p)       { this.progressionPath = p; }
+    public ProgressionPath getProgressionPath()         { return progressionPath; }
+    public void setProgressionPath(ProgressionPath p)   { this.progressionPath = p; }
 
-    public Rank getRank()                   { return rank; }
-    public void setRank(Rank r)             { this.rank = r; }
+    public Rank getRank()                  { return rank; }
+    public void setRank(Rank r)            { this.rank = r; }
 
-    public int getRankPoints()              { return rankPoints; }
-    public void setRankPoints(int pts)      { this.rankPoints = pts; }
+    public int  getRankPoints()            { return rankPoints; }
+    public void setRankPoints(int pts)     { this.rankPoints = pts; }
 
-    public long getServiceRecord()          { return serviceRecord; }
-    public void setServiceRecord(long sr)   { this.serviceRecord = sr; }
+    public long getServiceRecord()         { return serviceRecord; }
+    public void setServiceRecord(long sr)  { this.serviceRecord = sr; }
 
-    public Set<Billet> getBillets()                     { return Collections.unmodifiableSet(billets); }
-    public boolean hasBillet(Billet b)                  { return billets.contains(b); }
-    public boolean addBillet(Billet b)                  { return billets.add(b); }
-    public boolean removeBillet(Billet b)               { return billets.remove(b); }
+    public Set<Billet> getBillets()                 { return Collections.unmodifiableSet(billets); }
+    public boolean hasBillet(Billet b)              { return billets.contains(b); }
+    public boolean addBillet(Billet b)              { return billets.add(b); }
+    public boolean removeBillet(Billet b)           { return billets.remove(b); }
 
-    public Set<Certification> getCertifications()           { return Collections.unmodifiableSet(certifications); }
-    public boolean hasCertification(Certification c)        { return certifications.contains(c); }
-    public boolean addCertification(Certification c)        { return certifications.add(c); }
-    public boolean removeCertification(Certification c)     { return certifications.remove(c); }
+    public Set<Certification> getCertifications()       { return Collections.unmodifiableSet(certifications); }
+    public boolean hasCertification(Certification c)    { return certifications.contains(c); }
+    public boolean addCertification(Certification c)    { return certifications.add(c); }
+    public boolean removeCertification(Certification c) { return certifications.remove(c); }
 
-    public DutyStatus getDutyStatus()           { return dutyStatus; }
-    public void setDutyStatus(DutyStatus d)     { this.dutyStatus = d; }
+    public DutyStatus getDutyStatus()       { return dutyStatus; }
+    public void setDutyStatus(DutyStatus d) { this.dutyStatus = d; }
 
-    public UUID getSupervisorId()               { return supervisorId; }
-    public void setSupervisorId(UUID id)        { this.supervisorId = id; }
+    public UUID getSupervisorId()            { return supervisorId; }
+    public void setSupervisorId(UUID id)     { this.supervisorId = id; }
 
-    // ── Getters — character ───────────────────────────────────────────────────
+    // ── Getters / setters — Phase 5.5 ─────────────────────────────────────────
 
-    public String getCharacterId()                  { return characterId; }
-    public void setCharacterId(String id)           { this.characterId = id; }
+    public boolean isMustang()                  { return mustang; }
+    public void    setMustang(boolean mustang)  { this.mustang = mustang; }
 
-    public String getCharacterName()                { return characterName; }
-    public void setCharacterName(String n)          { this.characterName = n; }
+    public ShipPosition getShipPosition()                    { return shipPosition != null ? shipPosition : ShipPosition.NONE; }
+    public void         setShipPosition(ShipPosition pos)   { this.shipPosition = pos != null ? pos : ShipPosition.NONE; }
 
-    public String getSpecies()                      { return species; }
-    public void setSpecies(String s)                { this.species = s; }
+    // ── Getters / setters — character ─────────────────────────────────────────
 
-    public String getBio()                          { return bio; }
-    public void setBio(String b)                    { this.bio = b; }
+    public String getCharacterId()              { return characterId; }
+    public void   setCharacterId(String id)     { this.characterId = id; }
 
-    public CharacterStatus getCharacterStatus()             { return characterStatus; }
-    public void setCharacterStatus(CharacterStatus s)       { this.characterStatus = s; }
+    public String getCharacterName()            { return characterName; }
+    public void   setCharacterName(String n)    { this.characterName = n; }
+
+    public String getSpecies()                  { return species; }
+    public void   setSpecies(String s)          { this.species = s; }
+
+    public String getBio()                      { return bio; }
+    public void   setBio(String b)              { this.bio = b; }
+
+    public CharacterStatus getCharacterStatus()          { return characterStatus; }
+    public void setCharacterStatus(CharacterStatus s)    { this.characterStatus = s; }
 
     public boolean hasUniversalTranslator()         { return universalTranslator; }
-    public void setUniversalTranslator(boolean v)   { this.universalTranslator = v; }
+    public void    setUniversalTranslator(boolean v){ this.universalTranslator = v; }
 
     public boolean isPermadeathConsent()            { return permadeathConsent; }
-    public void setPermadeathConsent(boolean v)     { this.permadeathConsent = v; }
+    public void    setPermadeathConsent(boolean v)  { this.permadeathConsent = v; }
 
     public String getActiveLongTermInjuryId()           { return activeLongTermInjuryId; }
-    public void setActiveLongTermInjuryId(String id)    { this.activeLongTermInjuryId = id; }
+    public void   setActiveLongTermInjuryId(String id)  { this.activeLongTermInjuryId = id; }
 
-    public Long getDeceasedAt()                     { return deceasedAt; }
-    public void setDeceasedAt(Long ts)              { this.deceasedAt = ts; }
+    public Long getDeceasedAt()                 { return deceasedAt; }
+    public void setDeceasedAt(Long ts)          { this.deceasedAt = ts; }
 
-    public int getProgressionTransfer()             { return progressionTransfer; }
-    public void setProgressionTransfer(int pts)     { this.progressionTransfer = pts; }
+    public int  getProgressionTransfer()        { return progressionTransfer; }
+    public void setProgressionTransfer(int pts) { this.progressionTransfer = pts; }
 
-    public long getCharacterCreatedAt()             { return characterCreatedAt; }
-    public void setCharacterCreatedAt(long ts)      { this.characterCreatedAt = ts; }
+    public long getCharacterCreatedAt()         { return characterCreatedAt; }
+    public void setCharacterCreatedAt(long ts)  { this.characterCreatedAt = ts; }
 
     // ── Task state ────────────────────────────────────────────────────────────
 
-    public List<ActiveTask> getActiveTasks()                        { return activeTasks; }
-    public void setActiveTasks(List<ActiveTask> t)                  { this.activeTasks = t != null ? t : new ArrayList<>(); }
-    public List<CompletedTaskRecord> getCompletedTasks()            { return completedTasks; }
-    public void setCompletedTasks(List<CompletedTaskRecord> t)      { this.completedTasks = t != null ? t : new ArrayList<>(); }
+    public List<ActiveTask>          getActiveTasks()              { return activeTasks; }
+    public void setActiveTasks(List<ActiveTask> t)                 { this.activeTasks = t != null ? t : new ArrayList<>(); }
+    public List<CompletedTaskRecord> getCompletedTasks()           { return completedTasks; }
+    public void setCompletedTasks(List<CompletedTaskRecord> t)     { this.completedTasks = t != null ? t : new ArrayList<>(); }
 }

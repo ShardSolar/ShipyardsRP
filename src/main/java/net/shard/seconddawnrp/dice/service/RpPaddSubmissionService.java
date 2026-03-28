@@ -23,21 +23,18 @@ import java.util.UUID;
 /**
  * Manages RP PADD submissions.
  *
- * <p>On CONFIRM or DISPUTE:
- * <ol>
- *   <li>Marks the submission resolved in the database.</li>
- *   <li>Notifies the submitting player with the outcome.</li>
- *   <li>Generates a physical archived RP PADD item in the officer's inventory
- *       containing the full log stamped with the outcome, officer name, and date.
- *       The officer can hand this back to the player, file it in a chest, etc.</li>
- * </ol>
+ * On CONFIRM or DISPUTE:
+ *   1. Marks the submission resolved in the database.
+ *   2. Awards officer progression points to the reviewing officer (CONFIRM only).
+ *   3. Notifies the submitting player with the outcome.
+ *   4. Generates a physical archived RP PADD item in the officer's inventory.
  *
- * <p>Resolved submissions are automatically purged after 7 days via the
- * daily cleanup tick. PENDING submissions never expire automatically.
+ * Resolved submissions are automatically purged after 7 days.
+ * PENDING submissions never expire automatically.
  */
 public class RpPaddSubmissionService {
 
-    private static final long RESOLVED_EXPIRY_MS = 7L * 24 * 60 * 60 * 1000; // 7 days
+    private static final long RESOLVED_EXPIRY_MS = 7L * 24 * 60 * 60 * 1000;
     private static final SimpleDateFormat DATE_FMT = new SimpleDateFormat("yyyy-MM-dd HH:mm");
 
     private final RpPaddSubmission.Repository repository;
@@ -74,8 +71,15 @@ public class RpPaddSubmissionService {
 
     public boolean confirm(String submissionId, UUID reviewerUuid,
                            String linkedTaskId, ServerPlayerEntity officer) {
-        return review(submissionId, reviewerUuid,
+        boolean success = review(submissionId, reviewerUuid,
                 RpPaddSubmission.Status.CONFIRMED, null, linkedTaskId, officer);
+
+        // Award officer progression points for confirming a PADD session
+        if (success && SecondDawnRP.OFFICER_PROGRESSION_SERVICE != null) {
+            SecondDawnRP.OFFICER_PROGRESSION_SERVICE.awardReviewPaddSession(reviewerUuid);
+        }
+
+        return success;
     }
 
     public boolean dispute(String submissionId, UUID reviewerUuid,
@@ -98,10 +102,8 @@ public class RpPaddSubmissionService {
         if (linkedTaskId != null && !linkedTaskId.isBlank()) sub.setLinkedTaskId(linkedTaskId);
         repository.save(sub);
 
-        // Notify submitter
         notifySubmitter(sub, status, note);
 
-        // Generate archive PADD in officer's inventory
         if (officer != null) generateArchivePadd(officer, sub, status, note);
 
         return true;
@@ -109,10 +111,6 @@ public class RpPaddSubmissionService {
 
     // ── Archive PADD generation ───────────────────────────────────────────────
 
-    /**
-     * Creates a signed, stamped RP PADD item in the officer's inventory.
-     * Contains the full log plus a header showing outcome, officer, and date.
-     */
     private void generateArchivePadd(ServerPlayerEntity officer,
                                      RpPaddSubmission sub,
                                      RpPaddSubmission.Status status,
@@ -123,12 +121,11 @@ public class RpPaddSubmissionService {
         root.putBoolean(RpPaddItem.NBT_SIGNED, true);
         root.putString(RpPaddItem.NBT_SUBMITTER, sub.getSubmitterName());
 
-        // Build the log with a header prepended
         NbtList logList = new NbtList();
 
-        // Stamp header
         String dateStr = DATE_FMT.format(new Date(sub.getSubmittedAtMs()));
         String outcomeStr = status == RpPaddSubmission.Status.CONFIRMED ? "CONFIRMED" : "DISPUTED";
+
         logList.add(NbtString.of("── Archive Record ──────────────────"));
         logList.add(NbtString.of("Submitter : " + sub.getSubmitterName()));
         logList.add(NbtString.of("Reviewed by : " + officer.getGameProfile().getName()));
@@ -139,7 +136,6 @@ public class RpPaddSubmissionService {
         }
         logList.add(NbtString.of("─────────────────────────────────────"));
 
-        // Original entries
         for (String entry : sub.getEntries()) {
             logList.add(NbtString.of(entry));
         }
@@ -151,13 +147,11 @@ public class RpPaddSubmissionService {
         top.put(RpPaddItem.NBT_ROOT, root);
         archive.set(DataComponentTypes.CUSTOM_DATA, NbtComponent.of(top));
 
-        // Display name: outcome + submitter name
         archive.set(DataComponentTypes.CUSTOM_NAME,
                 Text.literal("Archive PADD [" + outcomeStr + " — " + sub.getSubmitterName() + "]")
                         .formatted(status == RpPaddSubmission.Status.CONFIRMED
                                 ? Formatting.GREEN : Formatting.RED));
 
-        // Give to officer — try inventory first, then drop at feet
         if (!officer.getInventory().insertStack(archive)) {
             officer.dropItem(archive, false);
             officer.sendMessage(Text.literal("[RP PADD] Archive PADD dropped — inventory full.")
@@ -168,12 +162,8 @@ public class RpPaddSubmissionService {
         }
     }
 
-    // ── Cleanup tick ──────────────────────────────────────────────────────────
+    // ── Cleanup ───────────────────────────────────────────────────────────────
 
-    /**
-     * Called once per day from the server tick. Removes resolved submissions
-     * older than 7 days. PENDING submissions are never removed automatically.
-     */
     public void cleanup() {
         long cutoff = System.currentTimeMillis() - RESOLVED_EXPIRY_MS;
         repository.deleteResolvedBefore(cutoff);
@@ -181,7 +171,8 @@ public class RpPaddSubmissionService {
 
     // ── Notify ────────────────────────────────────────────────────────────────
 
-    private void notifySubmitter(RpPaddSubmission sub, RpPaddSubmission.Status status, String note) {
+    private void notifySubmitter(RpPaddSubmission sub,
+                                 RpPaddSubmission.Status status, String note) {
         if (server == null) return;
         ServerPlayerEntity player = server.getPlayerManager().getPlayer(sub.getSubmitterUuid());
         if (player == null) return;

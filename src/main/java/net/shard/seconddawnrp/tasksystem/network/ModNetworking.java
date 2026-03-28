@@ -264,7 +264,11 @@ public class ModNetworking {
                     return;
                 }
                 success = SecondDawnRP.TASK_SERVICE.approveTask(targetProfile, taskId);
+                if (success) {
+                    SecondDawnRP.OFFICER_PROGRESSION_SERVICE.awardApproveTask(player.getUuid());
+                }
             }
+
 
             case "RETURN" -> {
                 if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canReturnTasks(player, actorProfile)) {
