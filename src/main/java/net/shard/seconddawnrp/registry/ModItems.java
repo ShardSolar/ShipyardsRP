@@ -9,6 +9,7 @@ import net.shard.seconddawnrp.degradation.item.ComponentRegistrationTool;
 import net.shard.seconddawnrp.degradation.item.EngineeringPadItem;
 import net.shard.seconddawnrp.dice.item.RpPaddItem;
 import net.shard.seconddawnrp.gmevent.item.*;
+import net.shard.seconddawnrp.roster.item.RosterPadItem;
 import net.shard.seconddawnrp.tasksystem.pad.OperationsPadItem;
 import net.shard.seconddawnrp.tasksystem.pad.TaskPadItem;
 import net.shard.seconddawnrp.tasksystem.terminal.TaskTerminalToolItem;
@@ -100,6 +101,11 @@ public class ModItems {
             Identifier.of(SecondDawnRP.MOD_ID, "terminal_designator_tool"),
             new net.shard.seconddawnrp.terminal.TerminalDesignatorToolItem(
                     new Item.Settings().maxCount(1))
+    );
+
+    public static final Item ROSTER_PAD = register(
+            "roster_pad",
+            new RosterPadItem(new Item.Settings().maxCount(1))
     );
 
     private static Item register(String id, Item item) {

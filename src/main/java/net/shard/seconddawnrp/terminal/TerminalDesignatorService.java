@@ -7,37 +7,35 @@ import net.minecraft.screen.SimpleNamedScreenHandlerFactory;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.RaycastContext;
 import net.shard.seconddawnrp.SecondDawnRP;
 import net.shard.seconddawnrp.degradation.network.OpenEngineeringPadS2CPacket;
+import net.shard.seconddawnrp.roster.network.RosterNetworking;
 import net.shard.seconddawnrp.tasksystem.pad.AdminTaskScreenHandler;
 import net.shard.seconddawnrp.tasksystem.util.TaskPermissionUtil;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Service layer for terminal designations.
  *
  * Responsibilities:
  *   1. Dispatch player right-click interactions to the correct existing screen.
- *      Each implemented type opens the screen exactly the same way the PADD
- *      item does — same handler, same permission check, same data.
- *   2. Render colored block-outline particles when the Terminal Designator Tool
- *      is held (server-side DustParticleEffect push, no client mod needed).
+ *   2. Render colored block-outline particles when the Terminal Designator Tool is held.
+ *   3. Show an action bar prompt when a player is looking at a designated terminal.
  */
 public class TerminalDesignatorService {
 
     private static final float PARTICLE_SIZE      = 0.8f;
     private static final int   PARTICLES_PER_EDGE = 8;
+    private static final double REACH             = 5.0;
 
     // ── Interact dispatch ─────────────────────────────────────────────────────
 
-    /**
-     * Called by TerminalDesignatorInteractListener when a non-sneaking player
-     * right-clicks a designated block.
-     *
-     * @return true if consumed (prevents vanilla block behaviour).
-     */
     public boolean handleInteract(ServerPlayerEntity player, ServerWorld world, BlockPos pos) {
         String worldKey = world.getRegistryKey().getValue().toString();
         var optional = SecondDawnRP.TERMINAL_DESIGNATOR_REGISTRY.get(worldKey, pos);
@@ -62,20 +60,13 @@ public class TerminalDesignatorService {
         return true;
     }
 
-    /**
-     * Opens the correct screen using the exact same call the PADD item uses.
-     * OPS_TERMINAL: openHandledScreen with AdminTaskScreenHandler (not a packet).
-     * ENGINEERING_CONSOLE: sends OpenEngineeringPadS2CPacket (that's how the pad item works).
-     */
     private void openScreen(ServerPlayerEntity player, TerminalDesignatorType type) {
         switch (type) {
 
             case OPS_TERMINAL -> {
-                // Identical to OperationsPadItem.use() — permission check then openHandledScreen
                 if (!TaskPermissionUtil.canOpenOperationsPad(player)) {
-                    player.sendMessage(
-                            Text.literal("You do not have permission to use the Operations PAD."),
-                            false);
+                    player.sendMessage(Text.literal(
+                            "You do not have permission to use the Operations PAD."), false);
                     return;
                 }
                 player.openHandledScreen(new SimpleNamedScreenHandlerFactory(
@@ -85,9 +76,12 @@ public class TerminalDesignatorService {
             }
 
             case ENGINEERING_CONSOLE -> {
-                // EngineeringPadItem sends this packet to open the screen client-side
                 ServerPlayNetworking.send(player,
                         OpenEngineeringPadS2CPacket.fromService(SecondDawnRP.DEGRADATION_SERVICE));
+            }
+
+            case ROSTER_CONSOLE -> {
+                RosterNetworking.openRoster(player);
             }
 
             default -> player.sendMessage(
@@ -96,12 +90,53 @@ public class TerminalDesignatorService {
         }
     }
 
-    // ── Glow particles ────────────────────────────────────────────────────────
+    // ── Action bar prompt ─────────────────────────────────────────────────────
 
     /**
-     * Called every 10 ticks per player from SecondDawnRP.java tick loop.
-     * Only fires if the player is holding the Terminal Designator Tool.
+     * Called every 10 ticks per player from the SecondDawnRP tick loop.
+     * Uses a proper server-side raycast with RaycastContext so the block
+     * the player is looking at is accurate.
      */
+    public void tickActionBarPrompt(ServerPlayerEntity player) {
+        if (!(player.getWorld() instanceof ServerWorld world)) return;
+
+        // Server-side raycast using the player's eye position and look direction
+        var eyePos = player.getEyePos();
+        var lookVec = player.getRotationVec(1.0f);
+        var endPos = eyePos.add(lookVec.multiply(REACH));
+
+        HitResult hit = world.raycast(new RaycastContext(
+                eyePos,
+                endPos,
+                RaycastContext.ShapeType.OUTLINE,
+                RaycastContext.FluidHandling.NONE,
+                player
+        ));
+
+        if (hit.getType() != HitResult.Type.BLOCK) return;
+
+        BlockPos pos = ((BlockHitResult) hit).getBlockPos();
+        String worldKey = world.getRegistryKey().getValue().toString();
+
+        Optional<TerminalDesignatorEntry> optional =
+                SecondDawnRP.TERMINAL_DESIGNATOR_REGISTRY.get(worldKey, pos);
+        if (optional.isEmpty()) return;
+
+        TerminalDesignatorType type = optional.get().getType();
+
+        Text prompt = Text.literal("")
+                .append(Text.literal("[ " + type.getDisplayName() + " ]")
+                        .withColor(type.isImplemented() ? type.getGlowColor() : 0xAAAAAA))
+                .append(Text.literal(type.isImplemented()
+                        ? "  §7Right-click to open"
+                        : "  §8Not yet active"));
+
+        // true = action bar (above XP bar)
+        player.sendMessage(prompt, true);
+    }
+
+    // ── Glow particles ────────────────────────────────────────────────────────
+
     public void tickGlowForPlayer(ServerPlayerEntity player) {
         if (!(player.getWorld() instanceof ServerWorld world)) return;
         ItemStack held = player.getMainHandStack();
@@ -109,10 +144,6 @@ public class TerminalDesignatorService {
         refreshGlowForPlayer(player, world);
     }
 
-    /**
-     * Spawns outline particles around all designated terminals within 32 blocks.
-     * Also called immediately after designating a new terminal.
-     */
     public void refreshGlowForPlayer(ServerPlayerEntity player, ServerWorld world) {
         String worldKey = world.getRegistryKey().getValue().toString();
         BlockPos center = player.getBlockPos();

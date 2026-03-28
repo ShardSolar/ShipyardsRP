@@ -9,10 +9,12 @@ import net.fabricmc.fabric.api.itemgroup.v1.FabricItemGroup;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.fabricmc.fabric.api.screenhandler.v1.ExtendedScreenHandlerType;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.item.*;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
+import net.minecraft.screen.ScreenHandlerType;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
@@ -86,6 +88,8 @@ import net.shard.seconddawnrp.progression.SqlSlotQueueRepository;
 import net.shard.seconddawnrp.registry.ModBlocks;
 import net.shard.seconddawnrp.registry.ModItems;
 import net.shard.seconddawnrp.registry.ModScreenHandlers;
+import net.shard.seconddawnrp.roster.data.RosterOpenData;
+import net.shard.seconddawnrp.roster.screen.RosterScreenHandler;
 import net.shard.seconddawnrp.tasksystem.command.TaskCommands;
 import net.shard.seconddawnrp.tasksystem.event.TaskEventRegistrar;
 import net.shard.seconddawnrp.tasksystem.loader.TaskJsonLoader;
@@ -162,6 +166,7 @@ public class SecondDawnRP implements ModInitializer {
     public static CommendationService       COMMENDATION_SERVICE;
     public static ShipPositionService       SHIP_POSITION_SERVICE;
     public static GroupTaskService          GROUP_TASK_SERVICE;
+    public static net.shard.seconddawnrp.roster.service.RosterService ROSTER_SERVICE;
 
     @Override
     public void onInitialize() {
@@ -232,6 +237,7 @@ public class SecondDawnRP implements ModInitializer {
                             entries.add(Item.fromBlock(ModBlocks.SUBMISSION_BOX));
                             entries.add(ModItems.SPAWN_ITEM_TOOL);
                             entries.add(ModItems.SPAWN_BLOCK_CONFIG_TOOL);
+                            entries.add(ModItems.ROSTER_PAD);
                         })
                         .build()
         );
@@ -458,6 +464,9 @@ public class SecondDawnRP implements ModInitializer {
         COMMENDATION_SERVICE        = new CommendationService(PROFILE_MANAGER, officerProgressionConfig);
         SHIP_POSITION_SERVICE       = new ShipPositionService(PROFILE_MANAGER);
         GROUP_TASK_SERVICE          = new GroupTaskService(PROFILE_MANAGER);
+        ROSTER_SERVICE = new net.shard.seconddawnrp.roster.service.RosterService(PROFILE_MANAGER);
+        net.shard.seconddawnrp.roster.network.RosterNetworking.registerPayloads();
+        net.shard.seconddawnrp.roster.network.RosterNetworking.registerServerReceivers();
 
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 ProgressionCommands.register(dispatcher));
@@ -477,6 +486,7 @@ public class SecondDawnRP implements ModInitializer {
             for (var player : server.getPlayerManager().getPlayerList()) {
                 GM_TOOL_VISIBILITY_SERVICE.onEquip(player, player.getMainHandStack());
                 TERMINAL_DESIGNATOR_SERVICE.tickGlowForPlayer(player);
+                TERMINAL_DESIGNATOR_SERVICE.tickActionBarPrompt(player);
             }
         });
         ServerTickEvents.END_SERVER_TICK.register(server -> {
@@ -543,6 +553,7 @@ public class SecondDawnRP implements ModInitializer {
             COMMENDATION_SERVICE.setServer(server);
             SHIP_POSITION_SERVICE.setServer(server);
             GROUP_TASK_SERVICE.setServer(server);
+            ROSTER_SERVICE.setServer(server);
         });
 
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
@@ -578,6 +589,9 @@ public class SecondDawnRP implements ModInitializer {
             }
         });
     }
+
+
+
 
     public static Identifier id(String path) {
         return Identifier.of(MOD_ID, path);

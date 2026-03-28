@@ -44,9 +44,14 @@ public class SecondDawnRPClient implements ClientModInitializer {
         ComponentWarningClientHandler.registerLocateReceiver();
         RpPaddClientHandler.register();
         SubmissionClientHandler.register();
+        net.minecraft.client.gui.screen.ingame.HandledScreens.register(
+                net.shard.seconddawnrp.registry.ModScreenHandlers.ROSTER_SCREEN,
+                net.shard.seconddawnrp.roster.screen.RosterScreen::new
+        );
         // GM keybindings
         GmKeybindings.register();
         GmKeyInputHandler.register();
+        net.shard.seconddawnrp.roster.network.RosterClientNetworking.register();
 
         // Ops PADD refresh
         ClientPlayNetworking.registerGlobalReceiver(

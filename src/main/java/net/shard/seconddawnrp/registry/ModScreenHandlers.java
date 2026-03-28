@@ -10,6 +10,8 @@ import net.shard.seconddawnrp.gmevent.screen.SpawnConfigScreenHandler;
 import net.shard.seconddawnrp.gmevent.screen.SpawnConfigScreenOpenData;
 import net.shard.seconddawnrp.gmevent.screen.SpawnItemScreenHandler;
 import net.shard.seconddawnrp.gmevent.screen.SpawnItemScreenOpenData;
+import net.shard.seconddawnrp.roster.data.RosterOpenData;
+import net.shard.seconddawnrp.roster.screen.RosterScreenHandler;
 import net.shard.seconddawnrp.tasksystem.pad.AdminTaskScreenHandler;
 import net.shard.seconddawnrp.tasksystem.pad.TaskPadOpeningData;
 import net.shard.seconddawnrp.tasksystem.pad.TaskPadScreenHandler;
@@ -53,6 +55,15 @@ public class ModScreenHandlers {
                     SecondDawnRP.id("spawn_item"),
                     new ExtendedScreenHandlerType<>(SpawnItemScreenHandler::new,
                             SpawnItemScreenOpenData.PACKET_CODEC)
+            );
+
+    public static final ScreenHandlerType<RosterScreenHandler> ROSTER_SCREEN =
+            Registry.register(
+                    Registries.SCREEN_HANDLER,
+                    SecondDawnRP.id("roster"),
+                    new ExtendedScreenHandlerType<>(
+                            (syncId, inv, data) -> new RosterScreenHandler(syncId, inv, data),
+                            RosterOpenData.PACKET_CODEC)
             );
 
     public static void register() {
