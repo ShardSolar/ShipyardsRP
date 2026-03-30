@@ -84,6 +84,10 @@ public class TerminalDesignatorService {
                 RosterNetworking.openRoster(player);
             }
 
+            case MEDICAL_CONSOLE -> {
+                SecondDawnRP.MEDICAL_TERMINAL_SERVICE.handleTerminalInteract(player);
+            }
+
             default -> player.sendMessage(
                     Text.literal("§7[Terminal] Screen routing not yet wired for: " + type.name()),
                     false);

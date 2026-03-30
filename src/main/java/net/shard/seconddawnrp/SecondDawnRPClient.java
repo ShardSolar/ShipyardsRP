@@ -44,6 +44,7 @@ public class SecondDawnRPClient implements ClientModInitializer {
         ComponentWarningClientHandler.registerLocateReceiver();
         RpPaddClientHandler.register();
         SubmissionClientHandler.register();
+        net.shard.seconddawnrp.medical.client.MedicalPadClientHandler.registerClientReceiver();
         net.minecraft.client.gui.screen.ingame.HandledScreens.register(
                 net.shard.seconddawnrp.registry.ModScreenHandlers.ROSTER_SCREEN,
                 net.shard.seconddawnrp.roster.screen.RosterScreen::new

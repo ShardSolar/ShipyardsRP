@@ -60,6 +60,7 @@ import net.shard.seconddawnrp.gmevent.network.OpenAnomalyConfigS2CPacket;
 import net.shard.seconddawnrp.gmevent.network.SaveAnomalyConfigC2SPacket;
 import net.shard.seconddawnrp.gmevent.repository.*;
 import net.shard.seconddawnrp.gmevent.service.*;
+import net.shard.seconddawnrp.medical.*;
 import net.shard.seconddawnrp.playerdata.DefaultProfileFactory;
 import net.shard.seconddawnrp.playerdata.LuckPermsGroupMapper;
 import net.shard.seconddawnrp.playerdata.LuckPermsPermissionService;
@@ -120,13 +121,15 @@ import net.shard.seconddawnrp.warpcore.repository.WarpCoreConfigRepository;
 import net.shard.seconddawnrp.warpcore.service.WarpCoreService;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
 
 public class SecondDawnRP implements ModInitializer {
 
     public static final String MOD_ID = "seconddawnrp";
 
-    // Core singletons
+    // ── Core singletons ───────────────────────────────────────────────────────
+
     public static DatabaseManager DATABASE_MANAGER;
     public static PlayerProfileManager PROFILE_MANAGER;
     public static PlayerProfileService PROFILE_SERVICE;
@@ -152,14 +155,18 @@ public class SecondDawnRP implements ModInitializer {
     public static GmRegistryService GM_REGISTRY_SERVICE;
     public static AnomalyService ANOMALY_SERVICE;
     public static GmToolVisibilityService GM_TOOL_VISIBILITY_SERVICE;
+    public static DownedService DOWNED_SERVICE;
+    public static GurneyService GURNEY_SERVICE;
 
-    // Phase 5.25
+    // ── Phase 5.25 ────────────────────────────────────────────────────────────
+
     public static TerminalDesignatorRegistry TERMINAL_DESIGNATOR_REGISTRY;
     public static TerminalDesignatorService  TERMINAL_DESIGNATOR_SERVICE;
     public static net.shard.seconddawnrp.cc.DegradationPeripheral CC_DEGRADATION_PERIPHERAL;
     public static net.shard.seconddawnrp.cc.OpsPeripheral          CC_OPS_PERIPHERAL;
 
-    // Phase 5.5
+    // ── Phase 5.5 ─────────────────────────────────────────────────────────────
+
     public static CadetService              CADET_SERVICE;
     public static OfficerSlotService        OFFICER_SLOT_SERVICE;
     public static OfficerProgressionService OFFICER_PROGRESSION_SERVICE;
@@ -167,6 +174,14 @@ public class SecondDawnRP implements ModInitializer {
     public static ShipPositionService       SHIP_POSITION_SERVICE;
     public static GroupTaskService          GROUP_TASK_SERVICE;
     public static net.shard.seconddawnrp.roster.service.RosterService ROSTER_SERVICE;
+
+    // ── Phase 8 — Medical ─────────────────────────────────────────────────────
+
+    public static MedicalConditionRegistry MEDICAL_CONDITION_REGISTRY;
+    public static MedicalService           MEDICAL_SERVICE;
+    public static MedicalTerminalService   MEDICAL_TERMINAL_SERVICE;
+
+    // ── onInitialize ──────────────────────────────────────────────────────────
 
     @Override
     public void onInitialize() {
@@ -203,6 +218,9 @@ public class SecondDawnRP implements ModInitializer {
             entries.add(Item.fromBlock(ModBlocks.SUBMISSION_BOX));
             entries.add(ModItems.SPAWN_ITEM_TOOL);
             entries.add(ModItems.SPAWN_BLOCK_CONFIG_TOOL);
+            entries.add(ModItems.TRICORDER);
+            entries.add(ModItems.MEDICAL_PAD);
+            entries.add(ModItems.GURNEY);
         });
 
         ItemGroup secondDawnRPGroup = Registry.register(
@@ -238,6 +256,9 @@ public class SecondDawnRP implements ModInitializer {
                             entries.add(ModItems.SPAWN_ITEM_TOOL);
                             entries.add(ModItems.SPAWN_BLOCK_CONFIG_TOOL);
                             entries.add(ModItems.ROSTER_PAD);
+                            entries.add(ModItems.TRICORDER);
+                            entries.add(ModItems.MEDICAL_PAD);
+                            entries.add(ModItems.GURNEY);
                         })
                         .build()
         );
@@ -267,6 +288,7 @@ public class SecondDawnRP implements ModInitializer {
 
         DefaultProfileFactory defaultProfileFactory = new DefaultProfileFactory();
         PROFILE_MANAGER = new PlayerProfileManager(profileRepository, defaultProfileFactory);
+        DOWNED_SERVICE = new DownedService(PROFILE_MANAGER);
         PROFILE_SERVICE = new PlayerProfileService(PROFILE_MANAGER, new NoOpProfileSyncService());
         PERMISSION_SERVICE = new NoOpPermissionService();
         TASK_PERMISSION_SERVICE = new TaskPermissionService(PERMISSION_SERVICE);
@@ -352,20 +374,30 @@ public class SecondDawnRP implements ModInitializer {
         CHARACTER_ARCHIVE = new CharacterArchiveRepository(DATABASE_MANAGER);
         SPECIES_REGISTRY = new SpeciesRegistry();
 
-        LongTermInjuryRepository ltiRepository = new SqlLongTermInjuryRepository(DATABASE_MANAGER);
-        LONG_TERM_INJURY_SERVICE = new LongTermInjuryService(ltiRepository,
-                new LongTermInjuryService.ProfileLtiCallback() {
-                    @Override
-                    public void clearLongTermInjury(UUID playerUuid) {
-                        PlayerProfile p = PROFILE_MANAGER.getLoadedProfile(playerUuid);
-                        if (p != null) { p.setActiveLongTermInjuryId(null); PROFILE_MANAGER.markDirty(playerUuid); }
-                    }
-                    @Override
-                    public void setLongTermInjury(UUID playerUuid, String injuryId) {
-                        PlayerProfile p = PROFILE_MANAGER.getLoadedProfile(playerUuid);
-                        if (p != null) { p.setActiveLongTermInjuryId(injuryId); PROFILE_MANAGER.markDirty(playerUuid); }
-                    }
-                });
+        SqlLongTermInjuryRepository sqlLtiRepository = new SqlLongTermInjuryRepository(DATABASE_MANAGER);
+
+        // ── SINGLE MedicalConditionRegistry instance shared by ALL services ──
+        // This MUST be created once here. Do NOT create it again in the Phase 8
+        // block below — doing so creates two instances, and only the second one
+        // gets reload() called, leaving LongTermInjuryService with an empty registry.
+        MEDICAL_CONDITION_REGISTRY = new MedicalConditionRegistry();
+
+        LONG_TERM_INJURY_SERVICE = new LongTermInjuryService(
+                sqlLtiRepository,
+                (playerUuid, conditionIds) -> {
+                    PlayerProfile p = PROFILE_MANAGER.getLoadedProfile(playerUuid);
+                    if (p == null) return;
+                    p.clearMedicalConditionIds();
+                    conditionIds.forEach(p::addMedicalConditionId);
+                    PROFILE_MANAGER.markDirty(playerUuid);
+                },
+                MEDICAL_CONDITION_REGISTRY
+        );
+
+        GURNEY_SERVICE = new GurneyService(PROFILE_MANAGER);
+
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                GurneyCommands.register(dispatcher));
 
         RDM_DETECTION_SERVICE = new RdmDetectionService(DATABASE_MANAGER);
 
@@ -436,14 +468,16 @@ public class SecondDawnRP implements ModInitializer {
                     .orElse(ActionResult.PASS);
         });
 
-        // Phase 5.25 - Terminal Designator
+        // ── Phase 5.25 — Terminal Designator ─────────────────────────────────
+
         TERMINAL_DESIGNATOR_REGISTRY = new TerminalDesignatorRegistry(configDir);
         try { TERMINAL_DESIGNATOR_REGISTRY.init(); }
         catch (Exception e) { throw new RuntimeException("Failed to initialize terminal designator registry", e); }
         TERMINAL_DESIGNATOR_SERVICE = new TerminalDesignatorService();
         new TerminalDesignatorInteractListener().register();
 
-        // Phase 5.5 - Career path infrastructure
+        // ── Phase 5.5 — Career path infrastructure ────────────────────────────
+
         CadetRankConfig cadetRankConfig = new CadetRankConfig(configDir);
         try { cadetRankConfig.init(); }
         catch (Exception e) { throw new RuntimeException("Failed to init cadet config", e); }
@@ -471,11 +505,48 @@ public class SecondDawnRP implements ModInitializer {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 ProgressionCommands.register(dispatcher));
 
-        // Tick loop
+        // ── Phase 8 — Medical ─────────────────────────────────────────────────
+        // NOTE: MEDICAL_CONDITION_REGISTRY already created above — not created again here.
+
+        SqlMedicalTerminalRepository medicalTerminalRepo =
+                new SqlMedicalTerminalRepository(DATABASE_MANAGER);
+
+        MedicalRepository medicalRepo =
+                new SqlMedicalRepository(DATABASE_MANAGER, sqlLtiRepository);
+
+        MEDICAL_TERMINAL_SERVICE = new MedicalTerminalService(
+                medicalTerminalRepo,
+                PROFILE_MANAGER,
+                medicalRepo,
+                MEDICAL_CONDITION_REGISTRY
+        );
+
+        MEDICAL_SERVICE = new MedicalService(
+                medicalRepo,
+                MEDICAL_CONDITION_REGISTRY,
+                PROFILE_MANAGER,
+                MEDICAL_TERMINAL_SERVICE,
+                LONG_TERM_INJURY_SERVICE
+        );
+
+        new MedicalInteractListener().register();
+        net.shard.seconddawnrp.medical.network.MedicalPadNetworking.registerPayloads();
+        net.shard.seconddawnrp.medical.network.MedicalPadNetworking.registerServerReceivers();
+
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                GmMedicalCommands.register(dispatcher));
+
+        DownedHooks.register();
+
+        // ── Tick loop ─────────────────────────────────────────────────────────
+
         ServerTickEvents.END_SERVER_TICK.register(server -> GM_EVENT_SERVICE.tick(server));
         ServerTickEvents.END_SERVER_TICK.register(server -> DEGRADATION_SERVICE.tick(server));
         ServerTickEvents.END_SERVER_TICK.register(server -> WARP_CORE_SERVICE.tick(server));
         ServerTickEvents.END_SERVER_TICK.register(server -> ENV_EFFECT_SERVICE.tick(server));
+        ServerTickEvents.END_SERVER_TICK.register(server -> GURNEY_SERVICE.tick(server));
+        ServerTickEvents.END_SERVER_TICK.register(server ->
+                DOWNED_SERVICE.tick(server, server.getTicks()));
         ServerTickEvents.END_SERVER_TICK.register(server -> TRIGGER_SERVICE.tick(server));
         ServerTickEvents.END_SERVER_TICK.register(server ->
                 LONG_TERM_INJURY_SERVICE.tick(server, server.getTicks()));
@@ -494,6 +565,8 @@ public class SecondDawnRP implements ModInitializer {
                 RP_PADD_SUBMISSION_SERVICE.cleanup();
             }
         });
+
+        // ── SERVER_STARTED ────────────────────────────────────────────────────
 
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             PROFILE_SERVICE.setProfileSyncService(new NoOpProfileSyncService());
@@ -554,7 +627,16 @@ public class SecondDawnRP implements ModInitializer {
             SHIP_POSITION_SERVICE.setServer(server);
             GROUP_TASK_SERVICE.setServer(server);
             ROSTER_SERVICE.setServer(server);
+
+            // Phase 8 — Medical
+            // reload() populates the SINGLE shared MEDICAL_CONDITION_REGISTRY instance
+            MEDICAL_CONDITION_REGISTRY.reload();
+            MEDICAL_TERMINAL_SERVICE.reload();
+            MEDICAL_SERVICE.setServer(server);
+            DOWNED_SERVICE.setServer(server);
         });
+
+        // ── Player join / leave ───────────────────────────────────────────────
 
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             PlayerProfile profile = PROFILE_SERVICE.getOrLoad(handler.getPlayer());
@@ -571,7 +653,12 @@ public class SecondDawnRP implements ModInitializer {
             PROFILE_MANAGER.unloadProfile(playerUuid);
         });
 
+        // ── SERVER_STOPPING ───────────────────────────────────────────────────
+
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+            if (GURNEY_SERVICE != null) {
+                GURNEY_SERVICE.cleanupAll(server);
+            }
             for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
                 PlayerProfile profile = PROFILE_MANAGER.getLoadedProfile(player.getUuid());
                 if (profile != null) TASK_SERVICE.saveTaskState(profile);
@@ -589,9 +676,6 @@ public class SecondDawnRP implements ModInitializer {
             }
         });
     }
-
-
-
 
     public static Identifier id(String path) {
         return Identifier.of(MOD_ID, path);

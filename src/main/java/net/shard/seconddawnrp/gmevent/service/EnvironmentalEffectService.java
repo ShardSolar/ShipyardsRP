@@ -27,15 +27,20 @@ import java.util.*;
  *   <li>Track per-player linger timers and ON_ENTRY cooldowns
  *   <li>Clear effects from players who have left and whose linger has expired
  * </ol>
+ *
+ * <p>Phase 8: medical condition application uses the renamed cache methods
+ * on PlayerProfile ({@code hasCachedCondition} / {@code cacheMedicalCondition}).
+ * Full condition persistence is handled by MedicalService — the Effect Block
+ * only applies session-cache conditions for RP hazard effects.
  */
 public class EnvironmentalEffectService {
 
     private final JsonEnvironmentalEffectRepository repository;
 
-    private final Map<String, EnvironmentalEffectEntry> entries = new LinkedHashMap<>();
-    private final Map<String, Long> playerEntryTimestamps = new HashMap<>();
-    private final Map<String, Set<UUID>> playersInRadius = new HashMap<>();
-    private final Map<String, Long> lingerExpiry = new HashMap<>();
+    private final Map<String, EnvironmentalEffectEntry> entries     = new LinkedHashMap<>();
+    private final Map<String, Long>                     playerEntryTimestamps = new HashMap<>();
+    private final Map<String, Set<UUID>>                playersInRadius       = new HashMap<>();
+    private final Map<String, Long>                     lingerExpiry          = new HashMap<>();
 
     private long serverTick = 0;
 
@@ -48,7 +53,8 @@ public class EnvironmentalEffectService {
         for (EnvironmentalEffectEntry e : repository.loadAll()) {
             entries.put(e.getEntryId(), e);
         }
-        System.out.println("[SecondDawnRP] Loaded " + entries.size() + " environmental effect blocks.");
+        System.out.println("[SecondDawnRP] Loaded " + entries.size()
+                + " environmental effect blocks.");
     }
 
     public void saveAll() {
@@ -66,8 +72,8 @@ public class EnvironmentalEffectService {
             ServerWorld world = resolveWorld(server, entry.getWorldKey());
             if (world == null) continue;
 
-            BlockPos pos = BlockPos.fromLong(entry.getBlockPosLong());
-            double radius = entry.getRadiusBlocks();
+            BlockPos pos    = BlockPos.fromLong(entry.getBlockPosLong());
+            double radius   = entry.getRadiusBlocks();
             Set<UUID> currentlyInRadius = new HashSet<>();
 
             for (ServerPlayerEntity player : world.getPlayers()) {
@@ -130,20 +136,21 @@ public class EnvironmentalEffectService {
             applyVanillaEffect(player, effectStr);
         }
 
-        // Medical condition — now goes through PROFILE_SERVICE/PROFILE_MANAGER
+        // Medical condition — apply to session cache only.
+        // Phase 8: hasCachedCondition / cacheMedicalCondition replace
+        // the old hasCondition / addMedicalCondition names.
         if (entry.getMedicalConditionId() != null && SecondDawnRP.PROFILE_MANAGER != null) {
-            PlayerProfile profile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(player.getUuid());
-            if (profile != null && !profile.hasCondition(entry.getMedicalConditionId())) {
-                SecondDawnRP.PROFILE_SERVICE.applyCondition(
-                        player.getUuid(),
-                        new MedicalCondition(
-                                entry.getMedicalConditionId(),
-                                entry.getMedicalConditionSeverity(),
-                                System.currentTimeMillis(),
-                                "Environmental hazard at "
-                                        + BlockPos.fromLong(entry.getBlockPosLong())
-                        )
-                );
+            PlayerProfile profile =
+                    SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(player.getUuid());
+            if (profile != null
+                    && !profile.hasCachedCondition(entry.getMedicalConditionId())) {
+                profile.cacheMedicalCondition(new MedicalCondition(
+                        entry.getMedicalConditionId(),
+                        entry.getMedicalConditionSeverity(),
+                        System.currentTimeMillis(),
+                        "Environmental hazard at "
+                                + BlockPos.fromLong(entry.getBlockPosLong())
+                ));
             }
         }
     }
@@ -181,7 +188,8 @@ public class EnvironmentalEffectService {
 
     // ── Registration ──────────────────────────────────────────────────────────
 
-    public EnvironmentalEffectEntry register(String worldKey, long blockPosLong, UUID registeredBy) {
+    public EnvironmentalEffectEntry register(String worldKey, long blockPosLong,
+                                             UUID registeredBy) {
         boolean exists = entries.values().stream()
                 .anyMatch(e -> e.getWorldKey().equals(worldKey)
                         && e.getBlockPosLong() == blockPosLong);
@@ -227,7 +235,8 @@ public class EnvironmentalEffectService {
 
     public Optional<EnvironmentalEffectEntry> getByPosition(String worldKey, long posLong) {
         return entries.values().stream()
-                .filter(e -> e.getWorldKey().equals(worldKey) && e.getBlockPosLong() == posLong)
+                .filter(e -> e.getWorldKey().equals(worldKey)
+                        && e.getBlockPosLong() == posLong)
                 .findFirst();
     }
 

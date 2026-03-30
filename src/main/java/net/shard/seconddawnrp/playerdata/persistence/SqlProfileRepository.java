@@ -114,6 +114,11 @@ public final class SqlProfileRepository implements ProfileRepository {
     // ── Upsert ────────────────────────────────────────────────────────────────
 
     private void upsertPlayer(PlayerProfile p, Connection conn) throws SQLException {
+        // active_long_term_injury_id now stores a comma-separated list of
+        // condition IDs (Phase 8). Single-ID values written by pre-V8 code
+        // are valid as single-element lists and round-trip correctly.
+        String conditionIdsCsv = serializeConditionIds(p.getActiveMedicalConditionIds());
+
         String sql = "INSERT INTO players ("
                 + "player_uuid, player_name, division_id, progression_path_id, "
                 + "rank_id, rank_points, service_record, duty_status, supervisor_uuid, "
@@ -162,7 +167,7 @@ public final class SqlProfileRepository implements ProfileRepository {
             ps.setString(14, p.getCharacterStatus() == null ? CharacterStatus.ACTIVE.name() : p.getCharacterStatus().name());
             ps.setInt(15,    p.hasUniversalTranslator() ? 1 : 0);
             ps.setInt(16,    p.isPermadeathConsent() ? 1 : 0);
-            setNullableString(ps, 17, p.getActiveLongTermInjuryId());
+            setNullableString(ps, 17, conditionIdsCsv.isEmpty() ? null : conditionIdsCsv);
             if (p.getDeceasedAt() != null) ps.setLong(18, p.getDeceasedAt());
             else ps.setNull(18, Types.INTEGER);
             ps.setInt(19,    p.getProgressionTransfer());
@@ -310,6 +315,10 @@ public final class SqlProfileRepository implements ProfileRepository {
             // Columns don't exist yet on pre-V7 databases — use defaults
         }
 
+        // Phase 8: active_long_term_injury_id is now a comma-separated list.
+        // Pre-V8 rows contain a single ID or null — both parse correctly.
+        List<String> conditionIds = deserializeConditionIds(rs.getString("active_long_term_injury_id"));
+
         return new PlayerProfile(
                 playerId,
                 rs.getString("player_name"),
@@ -331,7 +340,7 @@ public final class SqlProfileRepository implements ProfileRepository {
                 loadLanguages(playerId, conn),
                 rs.getInt("universal_translator") == 1,
                 rs.getInt("permadeath_consent") == 1,
-                rs.getString("active_long_term_injury_id"),
+                conditionIds,   // Phase 8 — replaces single activeLongTermInjuryId
                 deceasedAt,
                 rs.getInt("progression_transfer"),
                 rs.getLong("character_created_at"),
@@ -339,6 +348,25 @@ public final class SqlProfileRepository implements ProfileRepository {
                 mustang,
                 shipPosition
         );
+    }
+
+    // ── Condition ID serialization ────────────────────────────────────────────
+    // Stored as comma-separated text in the existing active_long_term_injury_id
+    // column. No commas are ever present in UUID-style injury IDs so this is safe.
+
+    private static String serializeConditionIds(List<String> ids) {
+        if (ids == null || ids.isEmpty()) return "";
+        return String.join(",", ids);
+    }
+
+    private static List<String> deserializeConditionIds(String raw) {
+        if (raw == null || raw.isBlank()) return new ArrayList<>();
+        List<String> result = new ArrayList<>();
+        for (String part : raw.split(",")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) result.add(trimmed);
+        }
+        return result;
     }
 
     // ── Parse helpers ─────────────────────────────────────────────────────────

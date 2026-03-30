@@ -1,13 +1,12 @@
 package net.shard.seconddawnrp.playerdata;
 
-import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
-import net.shard.seconddawnrp.character.MedicalCondition;
 import net.shard.seconddawnrp.division.Division;
 import net.shard.seconddawnrp.division.Rank;
 
+import java.util.ArrayList;
 import java.util.UUID;
 
 /**
@@ -15,6 +14,11 @@ import java.util.UUID;
  *
  * <p>Phase 5.5 merge: CharacterService is removed. All character lifecycle
  * methods now live here alongside the existing progression methods.
+ *
+ * <p>Phase 8: MedicalCondition session cache methods renamed to match
+ * PlayerProfile's updated API (addMedicalCondition → cacheMedicalCondition,
+ * removeMedicalCondition → uncacheMedicalCondition, etc.).
+ * setActiveLongTermInjuryId replaced by addMedicalConditionId / clearMedicalConditionIds.
  */
 public class PlayerProfileService {
 
@@ -23,7 +27,7 @@ public class PlayerProfileService {
 
     public PlayerProfileService(PlayerProfileManager profileManager,
                                 ProfileSyncService profileSyncService) {
-        this.profileManager    = profileManager;
+        this.profileManager     = profileManager;
         this.profileSyncService = profileSyncService;
     }
 
@@ -38,13 +42,11 @@ public class PlayerProfileService {
         PlayerProfile profile = profileManager.getOrLoadProfile(
                 player.getUuid(), player.getGameProfile().getName());
 
-        // Ensure characterId is always set — handles rows created before V5
         if (profile.getCharacterId() == null) {
             profile.setCharacterId(UUID.randomUUID().toString());
             profile.setCharacterCreatedAt(System.currentTimeMillis());
             profileManager.markDirty(player.getUuid());
         }
-
 
         return profile;
     }
@@ -55,10 +57,6 @@ public class PlayerProfileService {
 
     // ── Character creation terminal ───────────────────────────────────────────
 
-    /**
-     * Called when the player confirms their character creation form.
-     * Sets name, species, bio, and seeds starting languages.
-     */
     public boolean completeCreation(UUID playerUuid, String characterName,
                                     String speciesId, String bio) {
         PlayerProfile profile = profileManager.getLoadedProfile(playerUuid);
@@ -74,14 +72,6 @@ public class PlayerProfileService {
 
     // ── Character death ───────────────────────────────────────────────────────
 
-    /**
-     * Execute character death. Called from GmCharacterCommands.
-     *
-     * <p>Writes a snapshot to character_profiles archive, resets character
-     * fields on PlayerProfile, sets division to UNASSIGNED.
-     *
-     * @param transferPercent 0.0–1.0 fraction of rank points to carry forward
-     */
     public void executeCharacterDeath(UUID playerUuid, float transferPercent,
                                       ServerPlayerEntity playerIfOnline,
                                       net.shard.seconddawnrp.character.CharacterArchiveRepository archive) {
@@ -91,31 +81,32 @@ public class PlayerProfileService {
         int transferred = (int) (profile.getRankPoints()
                 * Math.max(0f, Math.min(1f, transferPercent)));
 
-        // Write archive snapshot before resetting
         if (archive != null) {
             archive.archive(profile, transferred);
         }
 
-        // Reset character fields — keep division/rank/points but wipe character identity
         profile.setCharacterStatus(CharacterStatus.DECEASED);
         profile.setDeceasedAt(System.currentTimeMillis());
 
-        // After a brief beat, reset to new blank character
+        // Reset to blank character
         profile.setCharacterId(UUID.randomUUID().toString());
         profile.setCharacterName(null);
         profile.setSpecies(null);
         profile.setBio(null);
         profile.setCharacterStatus(CharacterStatus.ACTIVE);
         profile.setDeceasedAt(null);
-        profile.setActiveLongTermInjuryId(null);
+
+        // Phase 8: clear medical condition IDs (replaces setActiveLongTermInjuryId(null))
+        profile.clearMedicalConditionIds();
+        profile.clearMedicalConditionCache();
+
         profile.setProgressionTransfer(transferred);
         profile.setCharacterCreatedAt(System.currentTimeMillis());
-        profile.getKnownLanguages(); // read access — languages cleared below
-        for (String lang : new java.util.ArrayList<>(profile.getKnownLanguages())) {
+
+        for (String lang : new ArrayList<>(profile.getKnownLanguages())) {
             profile.removeLanguage(lang);
         }
 
-        // Move to UNASSIGNED
         profile.setDivision(Division.UNASSIGNED);
         profileManager.markDirty(playerUuid);
 
@@ -146,26 +137,29 @@ public class PlayerProfileService {
         return true;
     }
 
-    // ── Medical conditions ────────────────────────────────────────────────────
+    // ── Medical condition session cache ───────────────────────────────────────
+    // These operate on the in-memory cache only (MedicalCondition objects).
+    // Persistence is handled by MedicalService via MedicalRepository.
 
-    public boolean applyCondition(UUID playerUuid, MedicalCondition condition) {
+    public boolean applyCondition(UUID playerUuid,
+                                  net.shard.seconddawnrp.character.MedicalCondition condition) {
         PlayerProfile profile = profileManager.getLoadedProfile(playerUuid);
         if (profile == null) return false;
-        profile.addMedicalCondition(condition);
+        profile.cacheMedicalCondition(condition);
         return true;
     }
 
     public boolean removeCondition(UUID playerUuid, String conditionId) {
         PlayerProfile profile = profileManager.getLoadedProfile(playerUuid);
         if (profile == null) return false;
-        profile.removeMedicalCondition(conditionId);
+        profile.uncacheMedicalCondition(conditionId);
         return true;
     }
 
     public boolean clearConditions(UUID playerUuid) {
         PlayerProfile profile = profileManager.getLoadedProfile(playerUuid);
         if (profile == null) return false;
-        profile.clearMedicalConditions();
+        profile.clearMedicalConditionCache();
         return true;
     }
 

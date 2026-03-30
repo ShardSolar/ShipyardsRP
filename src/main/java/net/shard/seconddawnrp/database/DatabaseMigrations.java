@@ -4,7 +4,7 @@ import java.sql.*;
 
 public final class DatabaseMigrations {
 
-    public static final int CURRENT_SCHEMA_VERSION = 7;
+    public static final int CURRENT_SCHEMA_VERSION = 9;
 
     public void migrate(Connection connection) throws SQLException {
         createSchemaVersionTableIfMissing(connection);
@@ -16,6 +16,8 @@ public final class DatabaseMigrations {
         if (v < 5) { applyVersion5(connection); setSchemaVersion(connection, 5); v = 5; }
         if (v < 6) { applyVersion6(connection); setSchemaVersion(connection, 6); v = 6; }
         if (v < 7) { applyVersion7(connection); setSchemaVersion(connection, 7); v = 7; }
+        if (v < 8) { applyVersion8(connection); setSchemaVersion(connection, 8); v = 8; }
+        if (v < 9) { applyVersion9(connection); setSchemaVersion(connection, 9); v = 9; }
         if (v > CURRENT_SCHEMA_VERSION)
             throw new SQLException("DB schema " + v + " newer than supported " + CURRENT_SCHEMA_VERSION);
     }
@@ -225,11 +227,8 @@ public final class DatabaseMigrations {
         }
     }
 
-    // ── V7: Phase 5.5 — Career path infrastructure ───────────────────────────
-
     private void applyVersion7(Connection c) throws SQLException {
         try (Statement s = c.createStatement()) {
-            // SQLite doesn't support IF NOT EXISTS on ALTER TABLE — use try/catch per column
             execSafe(c, "ALTER TABLE players ADD COLUMN mustang INTEGER NOT NULL DEFAULT 0");
             execSafe(c, "ALTER TABLE players ADD COLUMN ship_position TEXT NOT NULL DEFAULT 'NONE'");
 
@@ -243,16 +242,39 @@ public final class DatabaseMigrations {
         }
     }
 
+    private void applyVersion8(Connection c) throws SQLException {
+        execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN condition_key TEXT");
+        execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN display_name_override TEXT");
+        execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN description_override TEXT");
+        execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN requires_surgery INTEGER NOT NULL DEFAULT 0");
+        execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN treatment_steps_completed TEXT NOT NULL DEFAULT '[]'");
+        execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN resolved_by TEXT");
+        execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN resolution_note TEXT");
+        execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN is_death_cause INTEGER NOT NULL DEFAULT 0");
+        execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN applied_by TEXT");
+        execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN notes TEXT");
+
+        try (Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE IF NOT EXISTS medical_terminal_visitors ("
+                    + "player_uuid TEXT NOT NULL, "
+                    + "first_visit_at INTEGER NOT NULL, "
+                    + "last_visit_at INTEGER NOT NULL, "
+                    + "PRIMARY KEY (player_uuid))");
+        }
+    }
+
+    private void applyVersion9(Connection c) throws SQLException {
+        execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN effects_suppressed_until_ms INTEGER NOT NULL DEFAULT 0");
+        execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN last_milk_use_ms INTEGER NOT NULL DEFAULT 0");
+    }
+
     /**
-     * Executes a statement, silently ignoring "duplicate column" errors.
-     * SQLite ALTER TABLE ADD COLUMN fails if the column already exists,
-     * so we swallow that specific error to make migrations idempotent.
+     * Executes a statement, silently ignoring duplicate-column errors.
      */
     private void execSafe(Connection c, String sql) throws SQLException {
         try (Statement s = c.createStatement()) {
             s.execute(sql);
         } catch (SQLException e) {
-            // SQLite error message for duplicate column contains "duplicate column name"
             if (!e.getMessage().toLowerCase().contains("duplicate column")) {
                 throw e;
             }

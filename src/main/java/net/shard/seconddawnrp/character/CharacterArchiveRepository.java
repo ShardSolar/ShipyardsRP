@@ -14,7 +14,9 @@ import java.sql.*;
  * {@link PlayerProfile}.
  *
  * <p>This table is append-only — records are never updated or deleted.
- * Future phases (Roster historical view, Phase 9.5) will read from it.
+ *
+ * <p>Phase 8: active_long_term_injury_id is now a comma-separated list of
+ * condition IDs matching the players table format.
  */
 public class CharacterArchiveRepository {
 
@@ -33,6 +35,12 @@ public class CharacterArchiveRepository {
     public void archive(PlayerProfile profile, int transferred) {
         try {
             Connection conn = databaseManager.getConnection();
+
+            // Phase 8: serialize active condition IDs as CSV for the archive snapshot
+            String conditionIdsCsv = profile.getActiveMedicalConditionIds().isEmpty()
+                    ? null
+                    : String.join(",", profile.getActiveMedicalConditionIds());
+
             try (PreparedStatement ps = conn.prepareStatement(
                     "INSERT OR IGNORE INTO character_profiles ("
                             + "character_id, player_uuid, character_name, species, bio, status, "
@@ -48,7 +56,7 @@ public class CharacterArchiveRepository {
                 ps.setString(6, "DECEASED");
                 ps.setInt(7,    profile.hasUniversalTranslator() ? 1 : 0);
                 ps.setInt(8,    profile.isPermadeathConsent() ? 1 : 0);
-                setNullable(ps, 9, profile.getActiveLongTermInjuryId());
+                setNullable(ps, 9, conditionIdsCsv);
                 ps.setLong(10,  System.currentTimeMillis());
                 ps.setInt(11,   transferred);
                 ps.setLong(12,  profile.getCharacterCreatedAt());
@@ -58,7 +66,8 @@ public class CharacterArchiveRepository {
             // Archive languages too
             if (!profile.getKnownLanguages().isEmpty()) {
                 try (PreparedStatement lps = conn.prepareStatement(
-                        "INSERT OR IGNORE INTO character_known_languages (character_id, language_id) VALUES (?,?)")) {
+                        "INSERT OR IGNORE INTO character_known_languages "
+                                + "(character_id, language_id) VALUES (?,?)")) {
                     for (String lang : profile.getKnownLanguages()) {
                         lps.setString(1, profile.getCharacterId());
                         lps.setString(2, lang);
@@ -74,7 +83,9 @@ public class CharacterArchiveRepository {
         }
     }
 
-    private static void setNullable(PreparedStatement ps, int idx, String value) throws SQLException {
-        if (value != null) ps.setString(idx, value); else ps.setNull(idx, Types.VARCHAR);
+    private static void setNullable(PreparedStatement ps, int idx, String value)
+            throws SQLException {
+        if (value != null) ps.setString(idx, value);
+        else ps.setNull(idx, Types.VARCHAR);
     }
 }

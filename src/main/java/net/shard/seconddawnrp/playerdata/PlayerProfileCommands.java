@@ -26,15 +26,12 @@ public class PlayerProfileCommands {
         dispatcher.register(CommandManager.literal("profile")
                 .requires(source -> true)
 
-                // /profile — show own full profile
                 .executes(ctx -> showSelf(ctx))
 
-                // /profile <player> — GM view of another player (op 2+)
                 .then(CommandManager.argument("player", EntityArgumentType.player())
                         .requires(src -> src.hasPermissionLevel(2))
                         .executes(ctx -> showOther(ctx)))
 
-                // ── Admin sub-commands ────────────────────────────────────────
                 .then(CommandManager.literal("setdivision")
                         .then(CommandManager.argument("division", StringArgumentType.word())
                                 .executes(ctx -> {
@@ -101,8 +98,6 @@ public class PlayerProfileCommands {
         );
     }
 
-    // ── /profile (self) ───────────────────────────────────────────────────────
-
     private static int showSelf(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx) {
         try {
             ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
@@ -116,14 +111,13 @@ public class PlayerProfileCommands {
         }
     }
 
-    // ── /profile <player> (GM) ────────────────────────────────────────────────
-
     private static int showOther(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx) {
         try {
             ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
             PlayerProfile profile = SecondDawnRP.PROFILE_SERVICE.getLoaded(target.getUuid());
             if (profile == null) {
-                ctx.getSource().sendError(Text.literal(target.getName().getString() + " has no loaded profile."));
+                ctx.getSource().sendError(Text.literal(
+                        target.getName().getString() + " has no loaded profile."));
                 return 0;
             }
             sendDisplay(ctx.getSource(), profile, true);
@@ -134,13 +128,10 @@ public class PlayerProfileCommands {
         }
     }
 
-    // ── Unified display ───────────────────────────────────────────────────────
-
     private static void sendDisplay(ServerCommandSource source, PlayerProfile p, boolean gmView) {
         source.sendFeedback(() -> Text.literal("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 .formatted(Formatting.DARK_GRAY), false);
 
-        // Header — character name + deceased marker if applicable
         boolean deceased = p.getCharacterStatus() == CharacterStatus.DECEASED;
         source.sendFeedback(() -> Text.literal("Crew Profile")
                 .formatted(Formatting.GOLD)
@@ -148,9 +139,9 @@ public class PlayerProfileCommands {
                         ? Text.literal(" [DECEASED]").formatted(Formatting.DARK_RED)
                         : Text.literal("").formatted(Formatting.RESET)), false);
 
-        // Character identity
         source.sendFeedback(() -> row("Name",
-                p.getCharacterName() != null ? p.getCharacterName() : "(not set — visit Creation Terminal)"), false);
+                p.getCharacterName() != null
+                        ? p.getCharacterName() : "(not set — visit Creation Terminal)"), false);
         source.sendFeedback(() -> row("Species",
                 p.getSpecies() != null ? p.getSpecies() : "(not set)"), false);
 
@@ -158,10 +149,8 @@ public class PlayerProfileCommands {
         source.sendFeedback(() -> row("Bio",
                 bioText.length() > 80 ? bioText.substring(0, 77) + "…" : bioText), false);
 
-        // Divider
         source.sendFeedback(() -> Text.literal("  ·  ").formatted(Formatting.DARK_GRAY), false);
 
-        // Division / rank
         source.sendFeedback(() -> row("Division",
                 p.getDivision() != null ? p.getDivision().name() : "UNASSIGNED"), false);
         source.sendFeedback(() -> row("Rank",
@@ -173,7 +162,6 @@ public class PlayerProfileCommands {
         source.sendFeedback(() -> row("Duty",
                 p.getDutyStatus() != null ? p.getDutyStatus().name() : "OFF_DUTY"), false);
 
-        // Billets / certs (only if any)
         if (!p.getBillets().isEmpty()) {
             source.sendFeedback(() -> row("Billets",
                     p.getBillets().stream().map(Enum::name)
@@ -185,32 +173,32 @@ public class PlayerProfileCommands {
                             .reduce((a, b) -> a + ", " + b).orElse("")), false);
         }
 
-        // Divider
         source.sendFeedback(() -> Text.literal("  ·  ").formatted(Formatting.DARK_GRAY), false);
 
-        // Languages
         source.sendFeedback(() -> row("Languages",
                 p.getKnownLanguages().isEmpty() ? "none"
                         : String.join(", ", p.getKnownLanguages())), false);
 
-        // Injury
-        source.sendFeedback(() -> row("Injury",
-                p.getActiveLongTermInjuryId() != null ? "Active" : "None"), false);
+        // Phase 8: show active condition count instead of single LTI flag
+        int conditionCount = p.getActiveMedicalConditionIds().size();
+        source.sendFeedback(() -> row("Medical",
+                conditionCount == 0 ? "No active conditions"
+                        : conditionCount + " active condition(s) — see Tricorder"), false);
 
-        // Progression transfer if applicable
         if (p.getProgressionTransfer() > 0) {
             source.sendFeedback(() -> row("Transferred Points",
                     String.valueOf(p.getProgressionTransfer())), false);
         }
 
-        // GM-only fields
         if (gmView) {
             source.sendFeedback(() -> Text.literal("— GM —").formatted(Formatting.DARK_GRAY), false);
             source.sendFeedback(() -> row("Minecraft Name", p.getServiceName()), false);
             source.sendFeedback(() -> row("Player UUID",    p.getPlayerId().toString()), false);
-            source.sendFeedback(() -> row("Character ID",   p.getCharacterId() != null ? p.getCharacterId() : "none"), false);
+            source.sendFeedback(() -> row("Character ID",
+                    p.getCharacterId() != null ? p.getCharacterId() : "none"), false);
             source.sendFeedback(() -> row("Permadeath",     String.valueOf(p.isPermadeathConsent())), false);
-            source.sendFeedback(() -> row("Univ. Translator", String.valueOf(p.hasUniversalTranslator())), false);
+            source.sendFeedback(() -> row("Univ. Translator",
+                    String.valueOf(p.hasUniversalTranslator())), false);
             if (p.getCharacterCreatedAt() > 0) {
                 source.sendFeedback(() -> row("Char. Created",
                         DATE_FMT.format(Instant.ofEpochMilli(p.getCharacterCreatedAt()))), false);
@@ -218,6 +206,11 @@ public class PlayerProfileCommands {
             if (p.getDeceasedAt() != null) {
                 source.sendFeedback(() -> row("Died",
                         DATE_FMT.format(Instant.ofEpochMilli(p.getDeceasedAt()))), false);
+            }
+            // GM sees condition IDs directly
+            if (!p.getActiveMedicalConditionIds().isEmpty()) {
+                source.sendFeedback(() -> row("Condition IDs",
+                        String.join(", ", p.getActiveMedicalConditionIds())), false);
             }
         }
 

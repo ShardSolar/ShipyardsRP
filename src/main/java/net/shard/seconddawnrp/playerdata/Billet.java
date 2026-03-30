@@ -19,7 +19,10 @@ public enum Billet {
     // General placeholders
     DEPARTMENT_HEAD("department_head"),
     ASSISTANT_DEPARTMENT_HEAD("assistant_department_head"),
-    WATCH_OFFICER("watch_officer");
+    WATCH_OFFICER("watch_officer"),
+
+    // Phase 8 — Medical
+    SURGEON("surgeon");
 
     private final String id;
 

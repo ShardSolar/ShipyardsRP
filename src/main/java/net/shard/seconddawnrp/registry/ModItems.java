@@ -9,6 +9,9 @@ import net.shard.seconddawnrp.degradation.item.ComponentRegistrationTool;
 import net.shard.seconddawnrp.degradation.item.EngineeringPadItem;
 import net.shard.seconddawnrp.dice.item.RpPaddItem;
 import net.shard.seconddawnrp.gmevent.item.*;
+import net.shard.seconddawnrp.medical.GurneyItem;
+import net.shard.seconddawnrp.medical.MedicalPadItem;
+import net.shard.seconddawnrp.medical.TricorderItem;
 import net.shard.seconddawnrp.roster.item.RosterPadItem;
 import net.shard.seconddawnrp.tasksystem.pad.OperationsPadItem;
 import net.shard.seconddawnrp.tasksystem.pad.TaskPadItem;
@@ -107,6 +110,23 @@ public class ModItems {
             "roster_pad",
             new RosterPadItem(new Item.Settings().maxCount(1))
     );
+
+    // ── Phase 8 — Medical ─────────────────────────────────────────────────────
+
+    public static final Item TRICORDER = register(
+            "tricorder",
+            new TricorderItem(new Item.Settings().maxCount(1))
+    );
+
+    public static final Item MEDICAL_PAD = register(
+            "medical_pad",
+            new MedicalPadItem(new Item.Settings().maxCount(1))
+    );
+
+    public static final Item GURNEY = register("gurney",
+            new GurneyItem(new Item.Settings().maxCount(1)));
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static Item register(String id, Item item) {
         return Registry.register(Registries.ITEM, SecondDawnRP.id(id), item);

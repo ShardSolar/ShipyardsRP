@@ -38,12 +38,12 @@ public enum TerminalDesignatorType {
             false
     ),
 
-    // Phase 8 — planned
+    // Phase 8 — Medical (implemented)
     MEDICAL_CONSOLE(
             "Medical Console",
             "seconddawnrp.terminal.medical",
             0x2ECC71,
-            false
+            true   // was false — activated in Phase 8
     ),
 
     // Phase 9 — planned
