@@ -22,7 +22,6 @@ public class LongTermInjuryService {
 
     public static final int REFRESH_INTERVAL_TICKS = 6000;
     private static final int EFFECT_DURATION_TICKS = 7200;
-
     public static final float SPECIALIST_BONUS_MULTIPLIER = 1.5f;
 
     private final LongTermInjuryRepository repository;
@@ -30,7 +29,6 @@ public class LongTermInjuryService {
     private final MedicalConditionRegistry conditionRegistry;
 
     private final Map<UUID, List<LongTermInjury>> cache = new ConcurrentHashMap<>();
-
     private MinecraftServer server;
 
     public LongTermInjuryService(LongTermInjuryRepository repository,
@@ -72,10 +70,7 @@ public class LongTermInjuryService {
             }
         } else {
             repository.loadActive(player.getUuid()).ifPresent(injury -> {
-                if (injury.isExpired()) {
-                    expire(injury);
-                    return;
-                }
+                if (injury.isExpired()) { expire(injury); return; }
                 cacheAdd(injury);
                 applyEffects(player, injury);
             });
@@ -88,13 +83,11 @@ public class LongTermInjuryService {
 
     public void registerCondition(LongTermInjury injury) {
         cacheAdd(injury);
+        repository.save(injury);
         syncIdsToProfile(injury.getPlayerUuid(), cache.getOrDefault(injury.getPlayerUuid(), List.of()));
-
         if (server != null) {
             ServerPlayerEntity player = server.getPlayerManager().getPlayer(injury.getPlayerUuid());
-            if (player != null) {
-                applyEffects(player, injury);
-            }
+            if (player != null) applyEffects(player, injury);
         }
     }
 
@@ -116,44 +109,26 @@ public class LongTermInjuryService {
             }
         }
 
-        if (active.isEmpty()) {
-            cache.remove(playerUuid);
-        }
-
+        if (active.isEmpty()) cache.remove(playerUuid);
         syncIdsToProfile(playerUuid, cache.getOrDefault(playerUuid, List.of()));
 
         if (removed == null || server == null) return;
-
         ServerPlayerEntity player = server.getPlayerManager().getPlayer(playerUuid);
         if (player == null) return;
-
         removeEffectsForClearedCondition(player, removed, cache.getOrDefault(playerUuid, List.of()));
     }
 
-    /**
-     * Called when a player drinks milk.
-     *
-     * Milk never clears the condition itself.
-     * It can only suppress condition-owned effects temporarily if the template allows it.
-     *
-     * @return true if at least one condition was suppressed
-     */
     public boolean handleMilkUse(ServerPlayerEntity player, ItemStack stack) {
-        if (stack.getItem() != Items.MILK_BUCKET) {
-            return false;
-        }
+        if (stack.getItem() != Items.MILK_BUCKET) return false;
 
         List<LongTermInjury> active = cache.get(player.getUuid());
-        if (active == null || active.isEmpty()) {
-            return false;
-        }
+        if (active == null || active.isEmpty()) return false;
 
         boolean anySuppressed = false;
         long now = System.currentTimeMillis();
 
         for (LongTermInjury injury : active) {
             if (!injury.isRegistryBacked()) continue;
-
             String key = injury.getConditionKey();
             if (key == null || key.isBlank()) continue;
 
@@ -164,24 +139,16 @@ public class LongTermInjuryService {
             if (!template.allowsMilkSuppression()) continue;
 
             MedicalConditionTemplate.MilkInteraction milk = template.milkInteraction();
+            if (injury.areEffectsSuppressed()) continue;
+            if (milk.hasCooldown() && now < injury.getLastMilkUseMs() + milk.reapplyCooldownSeconds() * 1000L) continue;
 
-            // Anti-spam: if currently suppressed, or still on cooldown, do nothing
-            if (injury.areEffectsSuppressed()) {
-                continue;
-            }
-            if (milk.hasCooldown() && now < injury.getLastMilkUseMs() + milk.reapplyCooldownSeconds() * 1000L) {
-                continue;
-            }
-
-            long suppressedUntil = now + milk.suppressionSeconds() * 1000L;
-            injury.setEffectsSuppressedUntilMs(suppressedUntil);
+            injury.setEffectsSuppressedUntilMs(now + milk.suppressionSeconds() * 1000L);
             injury.setLastMilkUseMs(now);
             repository.save(injury);
 
             if (milk.clearOnUse()) {
                 removeEffectsForClearedCondition(player, injury, activeWithout(active, injury.getInjuryId()));
             }
-
             anySuppressed = true;
         }
 
@@ -190,7 +157,6 @@ public class LongTermInjuryService {
                             "[Medical] Milk provided temporary symptom relief, but the condition remains.")
                     .formatted(Formatting.YELLOW), false);
         }
-
         return anySuppressed;
     }
 
@@ -215,9 +181,7 @@ public class LongTermInjuryService {
 
             if (!toRemove.isEmpty()) {
                 conditions.removeAll(toRemove);
-                if (conditions.isEmpty()) {
-                    cache.remove(uuid);
-                }
+                if (conditions.isEmpty()) cache.remove(uuid);
                 syncIdsToProfile(uuid, cache.getOrDefault(uuid, List.of()));
             }
         }
@@ -226,15 +190,11 @@ public class LongTermInjuryService {
     public LongTermInjury applyInjury(UUID playerUuid, LongTermInjuryTier tier) {
         List<LongTermInjury> existing = getActive(playerUuid);
         LongTermInjury oldClassic = existing.stream()
-                .filter(c -> !c.isRegistryBacked())
-                .findFirst()
-                .orElse(null);
+                .filter(c -> !c.isRegistryBacked()).findFirst().orElse(null);
 
         LongTermInjuryTier effectiveTier = tier;
         if (oldClassic != null) {
-            if (oldClassic.getTier().ordinal() > tier.ordinal()) {
-                effectiveTier = oldClassic.getTier();
-            }
+            if (oldClassic.getTier().ordinal() > tier.ordinal()) effectiveTier = oldClassic.getTier();
             oldClassic.setActive(false);
             repository.save(oldClassic);
             cacheRemove(playerUuid, oldClassic.getInjuryId());
@@ -243,7 +203,6 @@ public class LongTermInjuryService {
         LongTermInjury injury = LongTermInjury.createNow(playerUuid, effectiveTier);
         cacheAdd(injury);
         repository.save(injury);
-
         syncIdsToProfile(playerUuid, cache.getOrDefault(playerUuid, List.of()));
 
         if (server != null) {
@@ -256,15 +215,26 @@ public class LongTermInjuryService {
                         .formatted(Formatting.RED), false);
             }
         }
-
         return injury;
     }
 
+    /**
+     * Treats the most recently applied non-registry-backed LTI.
+     *
+     * Phase 8.5: Uses getEffectiveSessionsRequired() so force-respawn LTIs
+     * with sessionsRequired=2 clear after 2 sessions regardless of tier default.
+     * Clears on whichever comes first: session threshold OR time expiry.
+     */
     public TreatmentResult treat(UUID patientUuid, boolean specialist) {
         List<LongTermInjury> active = getActive(patientUuid);
         if (active.isEmpty()) return TreatmentResult.NO_INJURY;
 
-        LongTermInjury injury = active.get(active.size() - 1);
+        // Target the most recently applied non-registry-backed injury
+        LongTermInjury injury = active.stream()
+                .filter(c -> !c.isRegistryBacked())
+                .reduce((a, b) -> a.getAppliedAtMs() > b.getAppliedAtMs() ? a : b)
+                .orElse(null);
+        if (injury == null) return TreatmentResult.NO_INJURY;
 
         if (!injury.isTreatmentCooldownOver()) {
             long remainMs = (injury.getLastTreatmentMs() + 24L * 3600_000)
@@ -272,18 +242,31 @@ public class LongTermInjuryService {
             return TreatmentResult.onCooldown(remainMs);
         }
 
-        float reduction = injury.getTier().reductionPerSession;
-        if (specialist) reduction *= SPECIALIST_BONUS_MULTIPLIER;
-
-        long remaining = injury.getExpiresAtMs() - System.currentTimeMillis();
-        long reduce = (long) (remaining * reduction);
-        long newExpiry = Math.max(0, injury.getExpiresAtMs() - reduce);
-
-        injury.setExpiresAtMs(newExpiry);
-        injury.setSessionsCompleted(injury.getSessionsCompleted() + 1);
+        // Increment sessions
+        int newSessions = injury.getSessionsCompleted() + 1;
+        injury.setSessionsCompleted(newSessions);
         injury.setLastTreatmentMs(System.currentTimeMillis());
 
-        if (newExpiry <= System.currentTimeMillis()) {
+        // Check session-based clear (whichever comes first)
+        if (injury.isSessionCleared()) {
+            expire(injury);
+            cacheRemove(patientUuid, injury.getInjuryId());
+            repository.save(injury);
+            syncIdsToProfile(patientUuid, cache.getOrDefault(patientUuid, List.of()));
+            return TreatmentResult.CLEARED;
+        }
+
+        // Also reduce time-based expiry
+        float reduction = injury.getTier().reductionPerSession;
+        if (specialist) reduction *= SPECIALIST_BONUS_MULTIPLIER;
+        long remaining = injury.getExpiresAtMs() - System.currentTimeMillis();
+        long reduce    = (long) (remaining * reduction);
+        long newExpiry = Math.max(System.currentTimeMillis() + 1000,
+                injury.getExpiresAtMs() - reduce);
+        injury.setExpiresAtMs(newExpiry);
+
+        // Check time-based clear
+        if (injury.isExpired()) {
             expire(injury);
             cacheRemove(patientUuid, injury.getInjuryId());
             repository.save(injury);
@@ -299,16 +282,12 @@ public class LongTermInjuryService {
         List<LongTermInjury> active = getActive(playerUuid);
         if (active.isEmpty()) {
             if (repository instanceof SqlLongTermInjuryRepository sqlRepo) {
-                List<LongTermInjury> loaded = sqlRepo.loadAllActiveForPlayer(playerUuid);
-                for (LongTermInjury injury : loaded) {
+                for (LongTermInjury injury : sqlRepo.loadAllActiveForPlayer(playerUuid))
                     applyExpiryAdjustment(playerUuid, injury, days);
-                }
             }
             return;
         }
-        for (LongTermInjury injury : active) {
-            applyExpiryAdjustment(playerUuid, injury, days);
-        }
+        for (LongTermInjury injury : active) applyExpiryAdjustment(playerUuid, injury, days);
     }
 
     private void applyExpiryAdjustment(UUID playerUuid, LongTermInjury injury, int days) {
@@ -334,6 +313,8 @@ public class LongTermInjuryService {
         return list != null && !list.isEmpty();
     }
 
+    // ── Cache helpers ─────────────────────────────────────────────────────────
+
     private void cacheAdd(LongTermInjury injury) {
         cache.computeIfAbsent(injury.getPlayerUuid(), k -> new ArrayList<>()).add(injury);
     }
@@ -351,21 +332,16 @@ public class LongTermInjuryService {
                 active.stream().map(LongTermInjury::getInjuryId).collect(Collectors.toList()));
     }
 
+    // ── Effect application ────────────────────────────────────────────────────
+
     private void applyEffects(ServerPlayerEntity player, LongTermInjury injury) {
-        if (injury.areEffectsSuppressed()) {
-            return;
-        }
-
-        if (applyConditionSpecificEffects(player, injury)) {
-            return;
-        }
-
+        if (injury.areEffectsSuppressed()) return;
+        if (applyConditionSpecificEffects(player, injury)) return;
         applyLegacyTierEffects(player, injury);
     }
 
     private boolean applyConditionSpecificEffects(ServerPlayerEntity player, LongTermInjury injury) {
         if (!injury.isRegistryBacked()) return false;
-
         String key = injury.getConditionKey();
         if (key == null || key.isBlank()) return false;
 
@@ -378,34 +354,23 @@ public class LongTermInjuryService {
         for (MedicalConditionTemplate.ConditionEffect effectDef : template.activeEffects()) {
             String effectId = effectDef.effect();
             if (effectId == null || effectId.isBlank()) continue;
-
             Identifier id;
-            try {
-                id = Identifier.of(effectId);
-            } catch (Exception e) {
+            try { id = Identifier.of(effectId); }
+            catch (Exception e) {
                 System.err.println("[SecondDawnRP] Invalid condition effect id: " + effectId);
                 continue;
             }
-
             Optional<StatusEffect> effectOpt = Registries.STATUS_EFFECT.getOrEmpty(id);
             if (effectOpt.isEmpty()) {
                 System.err.println("[SecondDawnRP] Unknown condition effect: " + effectId);
                 continue;
             }
-
-            int amplifier = Math.max(0, effectDef.amplifier());
-            int duration = Math.max(20, effectDef.durationTicks());
-
             player.addStatusEffect(new StatusEffectInstance(
                     Registries.STATUS_EFFECT.getEntry(effectOpt.get()),
-                    duration,
-                    amplifier,
-                    false,
-                    false,
-                    true
-            ));
+                    Math.max(20, effectDef.durationTicks()),
+                    Math.max(0, effectDef.amplifier()),
+                    false, false, true));
         }
-
         return true;
     }
 
@@ -441,12 +406,13 @@ public class LongTermInjuryService {
         }
     }
 
+    // ── Effect removal ────────────────────────────────────────────────────────
+
     private void removeEffectsForClearedCondition(ServerPlayerEntity player,
                                                   LongTermInjury cleared,
                                                   List<LongTermInjury> remainingConditions) {
-        if (cleared.isRegistryBacked() && removeConditionSpecificEffects(player, cleared, remainingConditions)) {
-            return;
-        }
+        if (cleared.isRegistryBacked()
+                && removeConditionSpecificEffects(player, cleared, remainingConditions)) return;
         removeLegacyTierEffects(player, cleared, remainingConditions);
     }
 
@@ -465,23 +431,14 @@ public class LongTermInjuryService {
         for (MedicalConditionTemplate.ConditionEffect effectDef : template.activeEffects()) {
             String effectId = effectDef.effect();
             if (effectId == null || effectId.isBlank()) continue;
-
             Identifier id;
-            try {
-                id = Identifier.of(effectId);
-            } catch (Exception ignored) {
-                continue;
-            }
-
+            try { id = Identifier.of(effectId); } catch (Exception ignored) { continue; }
             Optional<StatusEffect> effectOpt = Registries.STATUS_EFFECT.getOrEmpty(id);
             if (effectOpt.isEmpty()) continue;
-
             StatusEffect effect = effectOpt.get();
-            if (!remainingConditionsRequireEffect(remainingConditions, effect)) {
+            if (!remainingConditionsRequireEffect(remainingConditions, effect))
                 player.removeStatusEffect(Registries.STATUS_EFFECT.getEntry(effect));
-            }
         }
-
         return true;
     }
 
@@ -489,74 +446,61 @@ public class LongTermInjuryService {
                                          LongTermInjury cleared,
                                          List<LongTermInjury> remainingConditions) {
         Set<StatusEffect> legacyEffects = switch (cleared.getTier()) {
-            case MINOR -> Set.of(StatusEffects.WEAKNESS.value());
+            case MINOR    -> Set.of(StatusEffects.WEAKNESS.value());
             case MODERATE -> Set.of(StatusEffects.WEAKNESS.value(), StatusEffects.SLOWNESS.value());
-            case SEVERE -> Set.of(
-                    StatusEffects.WEAKNESS.value(),
+            case SEVERE   -> Set.of(StatusEffects.WEAKNESS.value(),
                     StatusEffects.SLOWNESS.value(),
-                    StatusEffects.NAUSEA.value()
-            );
+                    StatusEffects.NAUSEA.value());
         };
-
         for (StatusEffect effect : legacyEffects) {
-            if (!remainingConditionsRequireEffect(remainingConditions, effect)) {
+            if (!remainingConditionsRequireEffect(remainingConditions, effect))
                 player.removeStatusEffect(Registries.STATUS_EFFECT.getEntry(effect));
-            }
         }
     }
 
-    private boolean remainingConditionsRequireEffect(List<LongTermInjury> conditions, StatusEffect targetEffect) {
+    private boolean remainingConditionsRequireEffect(List<LongTermInjury> conditions,
+                                                     StatusEffect targetEffect) {
         for (LongTermInjury injury : conditions) {
-            if (injury.areEffectsSuppressed()) {
-                continue;
-            }
-
+            if (injury.areEffectsSuppressed()) continue;
             if (injury.isRegistryBacked()) {
                 String key = injury.getConditionKey();
                 if (key != null && !key.isBlank()) {
                     Optional<MedicalConditionTemplate> templateOpt = conditionRegistry.get(key);
                     if (templateOpt.isPresent() && templateOpt.get().hasActiveEffects()) {
-                        for (MedicalConditionTemplate.ConditionEffect effectDef : templateOpt.get().activeEffects()) {
+                        for (MedicalConditionTemplate.ConditionEffect effectDef
+                                : templateOpt.get().activeEffects()) {
                             try {
                                 Identifier id = Identifier.of(effectDef.effect());
-                                Optional<StatusEffect> effectOpt = Registries.STATUS_EFFECT.getOrEmpty(id);
-                                if (effectOpt.isPresent() && effectOpt.get() == targetEffect) {
+                                Optional<StatusEffect> effectOpt =
+                                        Registries.STATUS_EFFECT.getOrEmpty(id);
+                                if (effectOpt.isPresent() && effectOpt.get() == targetEffect)
                                     return true;
-                                }
-                            } catch (Exception ignored) {
-                            }
+                            } catch (Exception ignored) {}
                         }
                         continue;
                     }
                 }
             }
-
-            if (legacyTierRequiresEffect(injury.getTier(), targetEffect)) {
-                return true;
-            }
+            if (legacyTierRequiresEffect(injury.getTier(), targetEffect)) return true;
         }
         return false;
     }
 
     private boolean legacyTierRequiresEffect(LongTermInjuryTier tier, StatusEffect effect) {
         return switch (tier) {
-            case MINOR -> effect == StatusEffects.WEAKNESS.value();
+            case MINOR    -> effect == StatusEffects.WEAKNESS.value();
             case MODERATE -> effect == StatusEffects.WEAKNESS.value()
                     || effect == StatusEffects.SLOWNESS.value();
-            case SEVERE -> effect == StatusEffects.WEAKNESS.value()
+            case SEVERE   -> effect == StatusEffects.WEAKNESS.value()
                     || effect == StatusEffects.SLOWNESS.value()
                     || effect == StatusEffects.NAUSEA.value();
         };
     }
 
     private List<LongTermInjury> activeWithout(List<LongTermInjury> source, String injuryId) {
-        List<LongTermInjury> copy = new ArrayList<>();
-        for (LongTermInjury injury : source) {
-            if (!injury.getInjuryId().equals(injuryId)) {
-                copy.add(injury);
-            }
-        }
-        return copy;
+        return source.stream()
+                .filter(i -> !i.getInjuryId().equals(injuryId))
+                .toList();
     }
 
     private void expire(LongTermInjury injury) {
@@ -575,6 +519,8 @@ public class LongTermInjuryService {
         }
     }
 
+    // ── Interfaces / inner classes ────────────────────────────────────────────
+
     public interface ProfileLtiCallback {
         void setMedicalConditionIds(UUID playerUuid, List<String> conditionIds);
     }
@@ -583,8 +529,8 @@ public class LongTermInjuryService {
         public enum Type { NO_INJURY, ON_COOLDOWN, REDUCED, CLEARED }
 
         public static final TreatmentResult NO_INJURY = new TreatmentResult(Type.NO_INJURY, 0);
-        public static final TreatmentResult REDUCED = new TreatmentResult(Type.REDUCED, 0);
-        public static final TreatmentResult CLEARED = new TreatmentResult(Type.CLEARED, 0);
+        public static final TreatmentResult REDUCED   = new TreatmentResult(Type.REDUCED,   0);
+        public static final TreatmentResult CLEARED   = new TreatmentResult(Type.CLEARED,   0);
 
         public static TreatmentResult onCooldown(long remainingMs) {
             return new TreatmentResult(Type.ON_COOLDOWN, remainingMs);

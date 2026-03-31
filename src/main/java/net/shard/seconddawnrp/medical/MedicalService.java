@@ -24,35 +24,16 @@ import java.util.*;
 
 /**
  * Core service for the Phase 8 Medical system.
- *
- * Phase 8.1:
- * - Treatment step timing constraints enforced here.
- * - TreatmentState replaces the simple Set<String> for tracking completed
- *   steps — it also stores lastStepAt and conditionAppliedAt timestamps
- *   needed for timing window calculations.
- *
- * Phase 8.3:
- * - Timing failures now have gameplay consequences:
- *   - optional configured vanilla effect
- *   - condition expiry penalty
- *   - stronger officer/patient messaging
  */
 public class MedicalService {
 
     private static final Gson GSON = new Gson();
-
-    /**
-     * Added to condition expiry when a timed treatment step is missed.
-     * 10 minutes is enough to matter without being brutal.
-     */
-    private static final long TIMING_FAILURE_EXPIRY_PENALTY_MS = 10L * 60L * 1000L;
 
     private final MedicalRepository repository;
     private final MedicalConditionRegistry conditionRegistry;
     private final PlayerProfileManager profileManager;
     private final MedicalTerminalService terminalService;
     private final LongTermInjuryService longTermInjuryService;
-
     private MinecraftServer server;
 
     public MedicalService(
@@ -62,10 +43,10 @@ public class MedicalService {
             MedicalTerminalService terminalService,
             LongTermInjuryService longTermInjuryService
     ) {
-        this.repository = repository;
-        this.conditionRegistry = conditionRegistry;
-        this.profileManager = profileManager;
-        this.terminalService = terminalService;
+        this.repository            = repository;
+        this.conditionRegistry     = conditionRegistry;
+        this.profileManager        = profileManager;
+        this.terminalService       = terminalService;
         this.longTermInjuryService = longTermInjuryService;
     }
 
@@ -73,19 +54,6 @@ public class MedicalService {
 
     // ── Treatment state ───────────────────────────────────────────────────────
 
-    /**
-     * Structured state stored in treatment_steps_completed column.
-     * Replaces the old flat JsonArray of step keys.
-     *
-     * JSON format:
-     * {
-     *   "completed": ["step_key_1", "step_key_2"],
-     *   "lastStepAt": 1743350000000,
-     *   "conditionAppliedAt": 1743349800000
-     * }
-     *
-     * Old flat array format (pre-8.1) is handled gracefully in parseTreatmentState.
-     */
     public record TreatmentState(
             Set<String> completed,
             long lastStepAt,
@@ -119,9 +87,7 @@ public class MedicalService {
                 notes
         );
 
-        // Initialise treatment state with conditionAppliedAt timestamp
-        TreatmentState initialState = new TreatmentState(
-                new LinkedHashSet<>(), 0L, now);
+        TreatmentState initialState = new TreatmentState(new LinkedHashSet<>(), 0L, now);
         condition.setTreatmentStepsCompleted(serializeTreatmentState(initialState));
 
         repository.save(condition);
@@ -185,7 +151,6 @@ public class MedicalService {
                 if (state.completed().contains(step.stepKey())) continue;
                 if (!step.item().equals(heldItemId)) continue;
 
-                // Surgery check
                 if (step.requiresSurgery() && !officerProfile.hasBillet(Billet.SURGEON)) {
                     officer.sendMessage(Text.literal(
                                     "[Medical] This step requires the Surgeon certification.")
@@ -193,7 +158,6 @@ public class MedicalService {
                     return TreatmentStepResult.REQUIRES_SURGERY;
                 }
 
-                // Quantity check
                 if (held.getCount() < step.quantity()) {
                     officer.sendMessage(Text.literal(
                                     "[Medical] You need " + step.quantity() + "x "
@@ -209,14 +173,12 @@ public class MedicalService {
 
                     long referenceMs = switch (timing.triggerFrom()) {
                         case PREVIOUS_STEP -> state.lastStepAt() > 0
-                                ? state.lastStepAt()
-                                : state.conditionAppliedAt();
+                                ? state.lastStepAt() : state.conditionAppliedAt();
                         case CONDITION_APPLIED -> state.conditionAppliedAt();
                     };
 
                     long elapsedMs = now - referenceMs;
 
-                    // Too early
                     if (timing.hasMin() && elapsedMs < timing.minSeconds() * 1000L) {
                         long remainSec = (timing.minSeconds() * 1000L - elapsedMs) / 1000;
                         officer.sendMessage(Text.literal(
@@ -226,20 +188,23 @@ public class MedicalService {
                         return TreatmentStepResult.TIMING_NOT_YET;
                     }
 
-                    // Too late — trigger failure
                     if (timing.hasMax() && elapsedMs > timing.maxSeconds() * 1000L) {
                         String condName = conditionDisplayName(condition, template);
+                        officer.sendMessage(Text.literal(
+                                        "[Medical] Timing window expired for: " + step.label()
+                                                + ". Treatment plan reset.")
+                                .formatted(Formatting.RED), false);
+                        target.sendMessage(Text.literal(
+                                        "[Medical] A treatment step was missed. The procedure must restart.")
+                                .formatted(Formatting.RED), false);
 
-                        applyTimingFailureConsequences(
-                                condition,
-                                conditionId,
-                                timing,
-                                officer,
-                                target,
-                                condName,
-                                step.label(),
-                                state
-                        );
+                        if (timing.failureEffect() != null)
+                            applyVanillaEffect(target, timing.failureEffect());
+
+                        TreatmentState reset = new TreatmentState(
+                                new LinkedHashSet<>(), 0L, state.conditionAppliedAt());
+                        condition.setTreatmentStepsCompleted(serializeTreatmentState(reset));
+                        repository.updateSteps(conditionId, condition.getTreatmentStepsCompleted());
 
                         notifyGmsTimingFailure(condName, target, step.label());
                         return TreatmentStepResult.TIMING_FAILURE;
@@ -247,10 +212,8 @@ public class MedicalService {
                 }
                 // ── End timing check ──────────────────────────────────────────
 
-                // Consume items
                 held.decrement(step.quantity());
 
-                // Mark step complete — record timestamp
                 state.completed().add(step.stepKey());
                 TreatmentState newState = new TreatmentState(
                         state.completed(), System.currentTimeMillis(), state.conditionAppliedAt());
@@ -321,14 +284,23 @@ public class MedicalService {
 
         if (server != null) {
             ServerPlayerEntity patientPlayer = server.getPlayerManager().getPlayer(patientUuid);
-            if ("critical_trauma".equals(condition.getConditionKey()) && server != null) {
-                ServerPlayerEntity reviveTarget = server.getPlayerManager().getPlayer(patientUuid);
-                if (reviveTarget != null && net.shard.seconddawnrp.SecondDawnRP.DOWNED_SERVICE != null) {
+            if (patientPlayer != null) {
+                String condName = conditionDisplayName(condition, templateOpt.orElse(null));
+                patientPlayer.sendMessage(Text.literal(
+                                "[Medical] Your condition (" + condName + ") has been cleared by "
+                                        + officer.getDisplayName() + ".")
+                        .formatted(Formatting.GREEN), false);
+            }
+
+            // Revive bridge — resolving critical_trauma revives the downed player
+            if ("critical_trauma".equals(condition.getConditionKey())) {
+                ServerPlayerEntity reviveTarget =
+                        server.getPlayerManager().getPlayer(patientUuid);
+                if (reviveTarget != null
+                        && net.shard.seconddawnrp.SecondDawnRP.DOWNED_SERVICE != null) {
                     net.shard.seconddawnrp.SecondDawnRP.DOWNED_SERVICE.revivePlayer(reviveTarget);
                 }
             }
-
-
         }
         return ResolveResult.SUCCESS;
     }
@@ -339,9 +311,7 @@ public class MedicalService {
         Optional<LongTermInjury> condOpt = repository.loadById(conditionId);
         if (condOpt.isEmpty()) return;
         LongTermInjury condition = condOpt.get();
-
         repository.resolve(conditionId, gmUuid, "GM force-cleared");
-
         UUID patientUuid = condition.getPlayerUuid();
         PlayerProfile patient = profileManager.getLoadedProfile(patientUuid);
         if (patient != null) {
@@ -349,7 +319,6 @@ public class MedicalService {
             patient.uncacheMedicalCondition(conditionId);
             profileManager.markDirty(patientUuid);
         }
-
         longTermInjuryService.clearCondition(patientUuid, conditionId);
     }
 
@@ -365,7 +334,7 @@ public class MedicalService {
             boolean online = server != null
                     && server.getPlayerManager().getPlayer(uuid) != null;
             String characterName = profile != null ? profile.getDisplayName() : uuid.toString();
-            String rankDisplay = profile != null && profile.getRank() != null
+            String rankDisplay   = profile != null && profile.getRank() != null
                     ? profile.getRank().name() : "UNKNOWN";
 
             summaries.add(new PatientSummary(
@@ -404,7 +373,7 @@ public class MedicalService {
         return repository.loadHistoryForPlayer(patientUuid);
     }
 
-    // ── Timing window state query (for Tricorder) ─────────────────────────────
+    // ── Timing window state query ─────────────────────────────────────────────
 
     public TimingInfo getStepTimingInfo(LongTermInjury condition,
                                         MedicalConditionTemplate template,
@@ -436,7 +405,6 @@ public class MedicalService {
     }
 
     public enum TimingWindowState { NONE, WAITING, OPEN, EXPIRED }
-
     public record TimingInfo(TimingWindowState state, long secondsUntilOpen, long secondsUntilExpiry) {}
 
     // ── Authority checks ──────────────────────────────────────────────────────
@@ -451,51 +419,6 @@ public class MedicalService {
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
-
-    private void applyTimingFailureConsequences(
-            LongTermInjury condition,
-            String conditionId,
-            MedicalConditionTemplate.TimingConstraint timing,
-            ServerPlayerEntity officer,
-            ServerPlayerEntity target,
-            String condName,
-            String stepLabel,
-            TreatmentState state
-    ) {
-        // 1) Apply configured failure effect, if any
-        if (timing.failureEffect() != null && !timing.failureEffect().isBlank()) {
-            applyVanillaEffect(target, timing.failureEffect());
-        }
-
-        // 2) Worsen the condition by extending expiry
-        condition.setExpiresAtMs(condition.getExpiresAtMs() + TIMING_FAILURE_EXPIRY_PENALTY_MS);
-        repository.save(condition);
-
-        // 3) Reset treatment progress, but preserve original application timestamp
-        TreatmentState reset = new TreatmentState(
-                new LinkedHashSet<>(),
-                0L,
-                state.conditionAppliedAt()
-        );
-        String resetJson = serializeTreatmentState(reset);
-        condition.setTreatmentStepsCompleted(resetJson);
-        repository.updateSteps(conditionId, resetJson);
-
-        // 4) Notify patient/officer
-        officer.sendMessage(Text.literal(
-                        "[Medical] Timing window expired for: " + stepLabel
-                                + ". The treatment plan has reset and the condition worsened.")
-                .formatted(Formatting.RED), false);
-
-        target.sendMessage(Text.literal(
-                        "[Medical] A treatment step was mistimed. Your condition worsened and the procedure must restart.")
-                .formatted(Formatting.RED), false);
-
-        target.sendMessage(Text.literal(
-                        "[Medical] Additional recovery time required: "
-                                + formatSeconds(TIMING_FAILURE_EXPIRY_PENALTY_MS / 1000L))
-                .formatted(Formatting.DARK_RED), false);
-    }
 
     private void notifyMedicalOfficers(UUID patientUuid, String conditionName) {
         if (server == null) return;
@@ -519,19 +442,17 @@ public class MedicalService {
             if (online.hasPermissionLevel(3)) {
                 online.sendMessage(Text.literal(
                                 "[Medical] Timing failure on " + target.getName().getString()
-                                        + " — " + condName + " / " + stepLabel
-                                        + ". Plan reset and expiry increased.")
+                                        + " — " + condName + " / " + stepLabel + ". Plan reset.")
                         .formatted(Formatting.DARK_RED), false);
             }
         }
     }
 
     private static void applyVanillaEffect(ServerPlayerEntity player, String effectStr) {
-        // Format: "namespace:effect_name:amplifier:durationTicks"
         String[] parts = effectStr.split(":");
         if (parts.length < 2) return;
         int amplifier = parts.length > 2 ? parseInt(parts[2], 0) : 0;
-        int duration = parts.length > 3 ? parseInt(parts[3], 200) : 200;
+        int duration  = parts.length > 3 ? parseInt(parts[3], 200) : 200;
         StatusEffect effect = Registries.STATUS_EFFECT
                 .get(Identifier.of(parts[0], parts[1]));
         if (effect == null) return;
@@ -560,17 +481,15 @@ public class MedicalService {
     // ── Treatment state serialization ─────────────────────────────────────────
 
     public static TreatmentState parseTreatmentState(String json, long fallbackAppliedAt) {
-        if (json == null || json.isBlank()) {
+        if (json == null || json.isBlank())
             return new TreatmentState(new LinkedHashSet<>(), 0L, fallbackAppliedAt);
-        }
         try {
             if (json.trim().startsWith("{")) {
                 JsonObject obj = GSON.fromJson(json, JsonObject.class);
                 Set<String> completed = new LinkedHashSet<>();
-                if (obj.has("completed")) {
+                if (obj.has("completed"))
                     for (JsonElement el : obj.getAsJsonArray("completed"))
                         completed.add(el.getAsString());
-                }
                 long lastStepAt = obj.has("lastStepAt")
                         ? obj.get("lastStepAt").getAsLong() : 0L;
                 long conditionAppliedAt = obj.has("conditionAppliedAt")
@@ -602,16 +521,10 @@ public class MedicalService {
     public enum ApplyResult { SUCCESS, UNKNOWN_CONDITION }
 
     public enum TreatmentStepResult {
-        STEP_COMPLETE,
-        ALL_STEPS_COMPLETE,
-        NO_MATCHING_STEP,
-        NO_AUTHORITY,
-        NO_CONDITIONS,
-        NO_PATIENT_PROFILE,
-        REQUIRES_SURGERY,
-        INSUFFICIENT_ITEMS,
-        TIMING_NOT_YET,
-        TIMING_FAILURE
+        STEP_COMPLETE, ALL_STEPS_COMPLETE, NO_MATCHING_STEP,
+        NO_AUTHORITY, NO_CONDITIONS, NO_PATIENT_PROFILE,
+        REQUIRES_SURGERY, INSUFFICIENT_ITEMS,
+        TIMING_NOT_YET, TIMING_FAILURE
     }
 
     public enum ResolveResult {
@@ -653,7 +566,12 @@ public class MedicalService {
 
         public String severityColour() {
             if (template != null) return template.severity().colour();
-            return "§7";
+            if (condition.getTier() == null) return "§7";
+            return switch (condition.getTier()) {
+                case MINOR    -> "§e";
+                case MODERATE -> "§6";
+                case SEVERE   -> "§c";
+            };
         }
 
         public Set<String> completedSteps() { return state.completed(); }

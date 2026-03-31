@@ -21,12 +21,12 @@ public class MedicalPadNetworking {
         PayloadTypeRegistry.playS2C().register(
                 OpenMedicalPadS2CPacket.ID, OpenMedicalPadS2CPacket.CODEC);
         PayloadTypeRegistry.playC2S().register(
-                net.shard.seconddawnrp.medical.network.MedicalPadActionC2SPacket.ID, net.shard.seconddawnrp.medical.network.MedicalPadActionC2SPacket.CODEC);
+                MedicalPadActionC2SPacket.ID, MedicalPadActionC2SPacket.CODEC);
     }
 
     public static void registerServerReceivers() {
         ServerPlayNetworking.registerGlobalReceiver(
-                net.shard.seconddawnrp.medical.network.MedicalPadActionC2SPacket.ID,
+                MedicalPadActionC2SPacket.ID,
                 (payload, context) -> context.player().server.execute(() ->
                         handleAction(context.player(), payload))
         );
@@ -42,7 +42,7 @@ public class MedicalPadNetworking {
     // ── Action handler ────────────────────────────────────────────────────────
 
     private static void handleAction(ServerPlayerEntity actor,
-                                     net.shard.seconddawnrp.medical.network.MedicalPadActionC2SPacket packet) {
+                                     MedicalPadActionC2SPacket packet) {
         switch (packet.action()) {
             case "resolve" -> {
                 SecondDawnRP.MEDICAL_SERVICE.resolveCondition(
@@ -112,7 +112,8 @@ public class MedicalPadNetworking {
                         detail.displayName(),
                         detail.severityColour(),
                         detail.template() != null
-                                ? detail.template().severity().label() : "UNKNOWN",
+                                ? detail.template().severity().label()
+                                : tierSeverityLabel(detail.condition().getTier()),
                         detail.condition().isRequiresSurgery(),
                         detail.isReadyToResolve(),
                         steps
@@ -129,5 +130,14 @@ public class MedicalPadNetworking {
         }
 
         return new MedicalPadOpenData(patients, isSurgeon);
+    }
+
+    private static String tierSeverityLabel(net.shard.seconddawnrp.character.LongTermInjuryTier tier) {
+        if (tier == null) return "UNKNOWN";
+        return switch (tier) {
+            case MINOR    -> "ACUTE";
+            case MODERATE -> "CHRONIC";
+            case SEVERE   -> "CRITICAL";
+        };
     }
 }

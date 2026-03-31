@@ -80,17 +80,18 @@ public final class SqlLongTermInjuryRepository implements LongTermInjuryReposito
             try (PreparedStatement ps = conn.prepareStatement(
                     "INSERT INTO long_term_injuries ("
                             + "injury_id, player_uuid, tier, applied_at_ms, expires_at_ms, "
-                            + "sessions_completed, last_treatment_ms, active, "
+                            + "sessions_completed, last_treatment_ms, active, sessions_required, "
                             + "condition_key, display_name_override, description_override, "
                             + "requires_surgery, treatment_steps_completed, "
                             + "resolved_by, resolution_note, is_death_cause, applied_by, notes, "
                             + "effects_suppressed_until_ms, last_milk_use_ms"
-                            + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                            + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                             + "ON CONFLICT(injury_id) DO UPDATE SET "
                             + "expires_at_ms                = excluded.expires_at_ms, "
                             + "sessions_completed           = excluded.sessions_completed, "
                             + "last_treatment_ms            = excluded.last_treatment_ms, "
                             + "active                       = excluded.active, "
+                            + "sessions_required            = excluded.sessions_required, "
                             + "display_name_override        = excluded.display_name_override, "
                             + "description_override         = excluded.description_override, "
                             + "treatment_steps_completed    = excluded.treatment_steps_completed, "
@@ -100,26 +101,27 @@ public final class SqlLongTermInjuryRepository implements LongTermInjuryReposito
                             + "effects_suppressed_until_ms  = excluded.effects_suppressed_until_ms, "
                             + "last_milk_use_ms             = excluded.last_milk_use_ms")) {
 
-                ps.setString(1, injury.getInjuryId());
-                ps.setString(2, injury.getPlayerUuid().toString());
-                ps.setString(3, injury.getTier().name());
-                ps.setLong(4, injury.getAppliedAtMs());
-                ps.setLong(5, injury.getExpiresAtMs());
-                ps.setInt(6, injury.getSessionsCompleted());
-                ps.setLong(7, injury.getLastTreatmentMs());
-                ps.setInt(8, injury.isActive() ? 1 : 0);
-                setNullableString(ps, 9, injury.getConditionKey());
-                setNullableString(ps, 10, injury.getDisplayNameOverride());
-                setNullableString(ps, 11, injury.getDescriptionOverride());
-                ps.setInt(12, injury.isRequiresSurgery() ? 1 : 0);
-                ps.setString(13, injury.getTreatmentStepsCompleted());
-                setNullableString(ps, 14, injury.getResolvedBy());
-                setNullableString(ps, 15, injury.getResolutionNote());
-                ps.setInt(16, injury.isDeathCause() ? 1 : 0);
-                setNullableString(ps, 17, injury.getAppliedBy());
-                setNullableString(ps, 18, injury.getNotes());
-                ps.setLong(19, injury.getEffectsSuppressedUntilMs());
-                ps.setLong(20, injury.getLastMilkUseMs());
+                ps.setString(1,  injury.getInjuryId());
+                ps.setString(2,  injury.getPlayerUuid().toString());
+                ps.setString(3,  injury.getTier().name());
+                ps.setLong(4,    injury.getAppliedAtMs());
+                ps.setLong(5,    injury.getExpiresAtMs());
+                ps.setInt(6,     injury.getSessionsCompleted());
+                ps.setLong(7,    injury.getLastTreatmentMs());
+                ps.setInt(8,     injury.isActive() ? 1 : 0);
+                ps.setInt(9,     injury.getSessionsRequired());
+                setNullableString(ps, 10, injury.getConditionKey());
+                setNullableString(ps, 11, injury.getDisplayNameOverride());
+                setNullableString(ps, 12, injury.getDescriptionOverride());
+                ps.setInt(13,    injury.isRequiresSurgery() ? 1 : 0);
+                ps.setString(14, injury.getTreatmentStepsCompleted());
+                setNullableString(ps, 15, injury.getResolvedBy());
+                setNullableString(ps, 16, injury.getResolutionNote());
+                ps.setInt(17,    injury.isDeathCause() ? 1 : 0);
+                setNullableString(ps, 18, injury.getAppliedBy());
+                setNullableString(ps, 19, injury.getNotes());
+                ps.setLong(20,   injury.getEffectsSuppressedUntilMs());
+                ps.setLong(21,   injury.getLastMilkUseMs());
                 ps.executeUpdate();
             }
         } catch (SQLException e) {
@@ -158,18 +160,19 @@ public final class SqlLongTermInjuryRepository implements LongTermInjuryReposito
     }
 
     private LongTermInjury mapRow(ResultSet rs) throws SQLException {
-        String conditionKey = safeString(rs, "condition_key");
-        String displayNameOverride = safeString(rs, "display_name_override");
-        String descriptionOverride = safeString(rs, "description_override");
-        boolean requiresSurgery = safeInt(rs, "requires_surgery") == 1;
+        String conditionKey            = safeString(rs, "condition_key");
+        String displayNameOverride     = safeString(rs, "display_name_override");
+        String descriptionOverride     = safeString(rs, "description_override");
+        boolean requiresSurgery        = safeInt(rs, "requires_surgery") == 1;
         String treatmentStepsCompleted = safeStringDefault(rs, "treatment_steps_completed", "[]");
-        String resolvedBy = safeString(rs, "resolved_by");
-        String resolutionNote = safeString(rs, "resolution_note");
-        boolean isDeathCause = safeInt(rs, "is_death_cause") == 1;
-        String appliedBy = safeString(rs, "applied_by");
-        String notes = safeString(rs, "notes");
-        long effectsSuppressedUntilMs = safeLong(rs, "effects_suppressed_until_ms");
-        long lastMilkUseMs = safeLong(rs, "last_milk_use_ms");
+        String resolvedBy              = safeString(rs, "resolved_by");
+        String resolutionNote          = safeString(rs, "resolution_note");
+        boolean isDeathCause           = safeInt(rs, "is_death_cause") == 1;
+        String appliedBy               = safeString(rs, "applied_by");
+        String notes                   = safeString(rs, "notes");
+        long effectsSuppressedUntilMs  = safeLong(rs, "effects_suppressed_until_ms");
+        long lastMilkUseMs             = safeLong(rs, "last_milk_use_ms");
+        int sessionsRequired           = safeIntDefault(rs, "sessions_required", -1);
 
         return new LongTermInjury(
                 rs.getString("injury_id"),
@@ -180,6 +183,7 @@ public final class SqlLongTermInjuryRepository implements LongTermInjuryReposito
                 rs.getInt("sessions_completed"),
                 rs.getLong("last_treatment_ms"),
                 rs.getInt("active") == 1,
+                sessionsRequired,
                 conditionKey,
                 displayNameOverride,
                 descriptionOverride,
@@ -195,6 +199,8 @@ public final class SqlLongTermInjuryRepository implements LongTermInjuryReposito
         );
     }
 
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
     private static String safeString(ResultSet rs, String col) {
         try { return rs.getString(col); }
         catch (SQLException ignored) { return null; }
@@ -204,14 +210,19 @@ public final class SqlLongTermInjuryRepository implements LongTermInjuryReposito
         try {
             String v = rs.getString(col);
             return v != null ? v : def;
-        } catch (SQLException ignored) {
-            return def;
-        }
+        } catch (SQLException ignored) { return def; }
     }
 
     private static int safeInt(ResultSet rs, String col) {
         try { return rs.getInt(col); }
         catch (SQLException ignored) { return 0; }
+    }
+
+    private static int safeIntDefault(ResultSet rs, String col, int def) {
+        try {
+            int v = rs.getInt(col);
+            return rs.wasNull() ? def : v;
+        } catch (SQLException ignored) { return def; }
     }
 
     private static long safeLong(ResultSet rs, String col) {

@@ -4,20 +4,21 @@ import java.sql.*;
 
 public final class DatabaseMigrations {
 
-    public static final int CURRENT_SCHEMA_VERSION = 9;
+    public static final int CURRENT_SCHEMA_VERSION = 10;
 
     public void migrate(Connection connection) throws SQLException {
         createSchemaVersionTableIfMissing(connection);
         int v = getCurrentSchemaVersion(connection);
-        if (v < 1) { applyVersion1(connection); setSchemaVersion(connection, 1); v = 1; }
-        if (v < 2) { applyVersion2(connection); setSchemaVersion(connection, 2); v = 2; }
-        if (v < 3) { applyVersion3(connection); setSchemaVersion(connection, 3); v = 3; }
-        if (v < 4) { applyVersion4(connection); setSchemaVersion(connection, 4); v = 4; }
-        if (v < 5) { applyVersion5(connection); setSchemaVersion(connection, 5); v = 5; }
-        if (v < 6) { applyVersion6(connection); setSchemaVersion(connection, 6); v = 6; }
-        if (v < 7) { applyVersion7(connection); setSchemaVersion(connection, 7); v = 7; }
-        if (v < 8) { applyVersion8(connection); setSchemaVersion(connection, 8); v = 8; }
-        if (v < 9) { applyVersion9(connection); setSchemaVersion(connection, 9); v = 9; }
+        if (v < 1)  { applyVersion1(connection);  setSchemaVersion(connection, 1);  v = 1;  }
+        if (v < 2)  { applyVersion2(connection);  setSchemaVersion(connection, 2);  v = 2;  }
+        if (v < 3)  { applyVersion3(connection);  setSchemaVersion(connection, 3);  v = 3;  }
+        if (v < 4)  { applyVersion4(connection);  setSchemaVersion(connection, 4);  v = 4;  }
+        if (v < 5)  { applyVersion5(connection);  setSchemaVersion(connection, 5);  v = 5;  }
+        if (v < 6)  { applyVersion6(connection);  setSchemaVersion(connection, 6);  v = 6;  }
+        if (v < 7)  { applyVersion7(connection);  setSchemaVersion(connection, 7);  v = 7;  }
+        if (v < 8)  { applyVersion8(connection);  setSchemaVersion(connection, 8);  v = 8;  }
+        if (v < 9)  { applyVersion9(connection);  setSchemaVersion(connection, 9);  v = 9;  }
+        if (v < 10) { applyVersion10(connection); setSchemaVersion(connection, 10); v = 10; }
         if (v > CURRENT_SCHEMA_VERSION)
             throw new SQLException("DB schema " + v + " newer than supported " + CURRENT_SCHEMA_VERSION);
     }
@@ -187,22 +188,22 @@ public final class DatabaseMigrations {
 
     private void applyVersion5(Connection c) throws SQLException {
         try (Statement s = c.createStatement()) {
-            s.execute("ALTER TABLE players ADD COLUMN character_id TEXT");
-            s.execute("ALTER TABLE players ADD COLUMN character_name TEXT");
-            s.execute("ALTER TABLE players ADD COLUMN species TEXT");
-            s.execute("ALTER TABLE players ADD COLUMN bio TEXT");
-            s.execute("ALTER TABLE players ADD COLUMN character_status TEXT NOT NULL DEFAULT 'ACTIVE'");
+            execSafe(c, "ALTER TABLE players ADD COLUMN character_id TEXT");
+            execSafe(c, "ALTER TABLE players ADD COLUMN character_name TEXT");
+            execSafe(c, "ALTER TABLE players ADD COLUMN species TEXT");
+            execSafe(c, "ALTER TABLE players ADD COLUMN bio TEXT");
+            execSafe(c, "ALTER TABLE players ADD COLUMN character_status TEXT NOT NULL DEFAULT 'ACTIVE'");
             s.execute("CREATE TABLE IF NOT EXISTS player_known_languages ("
                     + "player_uuid TEXT NOT NULL, "
                     + "language_id TEXT NOT NULL, "
                     + "PRIMARY KEY (player_uuid, language_id))");
-            s.execute("ALTER TABLE players ADD COLUMN universal_translator INTEGER NOT NULL DEFAULT 0");
-            s.execute("ALTER TABLE players ADD COLUMN permadeath_consent INTEGER NOT NULL DEFAULT 0");
-            s.execute("ALTER TABLE players ADD COLUMN active_long_term_injury_id TEXT");
-            s.execute("ALTER TABLE players ADD COLUMN deceased_at INTEGER");
-            s.execute("ALTER TABLE players ADD COLUMN progression_transfer INTEGER NOT NULL DEFAULT 0");
-            s.execute("ALTER TABLE players ADD COLUMN character_created_at INTEGER NOT NULL DEFAULT 0");
-            s.execute("ALTER TABLE players ADD COLUMN service_record INTEGER NOT NULL DEFAULT 0");
+            execSafe(c, "ALTER TABLE players ADD COLUMN universal_translator INTEGER NOT NULL DEFAULT 0");
+            execSafe(c, "ALTER TABLE players ADD COLUMN permadeath_consent INTEGER NOT NULL DEFAULT 0");
+            execSafe(c, "ALTER TABLE players ADD COLUMN active_long_term_injury_id TEXT");
+            execSafe(c, "ALTER TABLE players ADD COLUMN deceased_at INTEGER");
+            execSafe(c, "ALTER TABLE players ADD COLUMN progression_transfer INTEGER NOT NULL DEFAULT 0");
+            execSafe(c, "ALTER TABLE players ADD COLUMN character_created_at INTEGER NOT NULL DEFAULT 0");
+            execSafe(c, "ALTER TABLE players ADD COLUMN service_record INTEGER NOT NULL DEFAULT 0");
         }
     }
 
@@ -231,7 +232,6 @@ public final class DatabaseMigrations {
         try (Statement s = c.createStatement()) {
             execSafe(c, "ALTER TABLE players ADD COLUMN mustang INTEGER NOT NULL DEFAULT 0");
             execSafe(c, "ALTER TABLE players ADD COLUMN ship_position TEXT NOT NULL DEFAULT 'NONE'");
-
             s.execute("CREATE TABLE IF NOT EXISTS officer_slot_queue ("
                     + "player_uuid TEXT NOT NULL, "
                     + "target_rank TEXT NOT NULL, "
@@ -253,7 +253,6 @@ public final class DatabaseMigrations {
         execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN is_death_cause INTEGER NOT NULL DEFAULT 0");
         execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN applied_by TEXT");
         execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN notes TEXT");
-
         try (Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS medical_terminal_visitors ("
                     + "player_uuid TEXT NOT NULL, "
@@ -268,9 +267,13 @@ public final class DatabaseMigrations {
         execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN last_milk_use_ms INTEGER NOT NULL DEFAULT 0");
     }
 
-    /**
-     * Executes a statement, silently ignoring duplicate-column errors.
-     */
+    private void applyVersion10(Connection c) throws SQLException {
+        // -1 = use tier default (backward compatible with all existing rows)
+        execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN sessions_required INTEGER NOT NULL DEFAULT -1");
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
     private void execSafe(Connection c, String sql) throws SQLException {
         try (Statement s = c.createStatement()) {
             s.execute(sql);
