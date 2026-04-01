@@ -31,7 +31,6 @@ public class TerminalInteractListener {
         var stack = player.getMainHandStack();
         if (stack.getItem() instanceof TaskTerminalToolItem) return ActionResult.PASS;
 
-        // Build opening data and open the screen
         ServerPlayerEntity serverPlayer = (ServerPlayerEntity) player;
         TerminalScreenOpenData data = terminalManager.buildOpeningData(serverPlayer, world, pos);
         serverPlayer.openHandledScreen(new TerminalScreenHandlerFactory(data));

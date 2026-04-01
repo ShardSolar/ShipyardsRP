@@ -158,6 +158,7 @@ public class SecondDawnRP implements ModInitializer {
     public static DownedService DOWNED_SERVICE;
     public static GurneyService GURNEY_SERVICE;
 
+
     // ── Phase 5.25 ────────────────────────────────────────────────────────────
 
     public static TerminalDesignatorRegistry TERMINAL_DESIGNATOR_REGISTRY;
@@ -454,7 +455,6 @@ public class SecondDawnRP implements ModInitializer {
 
         PayloadTypeRegistry.playS2C().register(OpenAnomalyConfigS2CPacket.ID, OpenAnomalyConfigS2CPacket.CODEC);
         PayloadTypeRegistry.playC2S().register(SaveAnomalyConfigC2SPacket.ID, SaveAnomalyConfigC2SPacket.CODEC);
-        AnomalyClientHandler.registerServerReceiver();
         PayloadTypeRegistry.playS2C().register(LocateComponentS2CPacket.ID, LocateComponentS2CPacket.CODEC);
 
         UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {

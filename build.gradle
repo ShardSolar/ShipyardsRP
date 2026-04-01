@@ -27,7 +27,6 @@ repositories {
         url = "https://repo.lucko.me/"
     }
 
-    // ComputerCraft — compile-only, not bundled, not required at runtime
     maven {
         name = "SquidDev"
         url = "https://maven.squiddev.cc"
@@ -64,10 +63,18 @@ dependencies {
     include "org.xerial:sqlite-jdbc:3.45.3.0"
     include modApi("teamreborn:energy:4.1.0")
 
-    // ComputerCraft API — compile-only so the .cc package builds cleanly.
-    // Not bundled, not required at runtime. CCPeripheralRegistry checks
-    // FabricLoader.isModLoaded("computercraft") before touching any CC class.
     modCompileOnly "cc.tweaked:cc-tweaked-1.21.1-fabric-api:1.117.1"
+}
+
+loom {
+    runs {
+        client {
+            runDir = "runClient"
+        }
+        server {
+            runDir = "runServer"
+        }
+    }
 }
 
 fabricApi {

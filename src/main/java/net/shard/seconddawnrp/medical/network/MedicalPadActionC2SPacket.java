@@ -8,9 +8,9 @@ import net.shard.seconddawnrp.SecondDawnRP;
 /**
  * Sent client → server when the officer presses "Mark Resolved" on the Medical PADD.
  *
- * @param action       one of: "resolve"
- * @param conditionId  target condition ID
- * @param stringArg    resolution note (for "resolve")
+ * @param action      one of: "resolve"
+ * @param conditionId target condition ID
+ * @param stringArg   resolution note
  */
 public record MedicalPadActionC2SPacket(
         String action,
@@ -35,5 +35,8 @@ public record MedicalPadActionC2SPacket(
                     )
             );
 
-    @Override public Id<? extends CustomPayload> getId() { return ID; }
+    @Override
+    public Id<? extends CustomPayload> getId() {
+        return ID;
+    }
 }

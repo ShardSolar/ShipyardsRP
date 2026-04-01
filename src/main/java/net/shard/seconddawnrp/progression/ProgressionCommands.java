@@ -14,24 +14,6 @@ import net.shard.seconddawnrp.playerdata.PlayerProfile;
 
 import java.util.UUID;
 
-/**
- * Commands for Phase 5.5 progression systems.
- *
- * /cadet enrol [player]               — enrol a player in the cadet track
- * /cadet promote [player]             — promote cadet one step (CADET_1→2→3→4)
- * /cadet graduate [player] [rank]     — propose graduation starting rank
- * /cadet approve [player]             — Captain approves a pending graduation
- * /cadet status [player]              — view a cadet's current status
- *
- * /officer commend [player] [points] [reason...]  — issue a commendation
- *
- * /admin slots list                   — list all rank slot counts
- * /admin slots set [rank] [count]     — set slot count for a rank
- * /admin slots queue [rank]           — view the promotion queue for a rank
- *
- * /admin position set [player] [FIRST_OFFICER|SECOND_OFFICER]
- * /admin position clear [player]
- */
 public class ProgressionCommands {
 
     public static void register(CommandDispatcher<ServerCommandSource> dispatcher) {
@@ -41,23 +23,24 @@ public class ProgressionCommands {
         registerAdminPositionCommands(dispatcher);
     }
 
-    // ── /cadet ────────────────────────────────────────────────────────────────
-
     private static void registerCadetCommands(CommandDispatcher<ServerCommandSource> dispatcher) {
         dispatcher.register(CommandManager.literal("cadet")
-                .requires(src -> src.hasPermissionLevel(2))
 
                 .then(CommandManager.literal("enrol")
                         .then(CommandManager.argument("player", EntityArgumentType.player())
                                 .executes(ctx -> {
                                     ServerPlayerEntity actor = ctx.getSource().getPlayerOrThrow();
+                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(actor.getUuid());
+                                    if (!SecondDawnRP.PERMISSION_SERVICE.canCadetEnrol(actor, actorProfile)) {
+                                        actor.sendMessage(Text.literal("[Cadet] No permission."), false);
+                                        return 0;
+                                    }
+
                                     ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
-                                    boolean ok = SecondDawnRP.CADET_SERVICE.enrol(
-                                            target.getUuid(), actor);
+                                    boolean ok = SecondDawnRP.CADET_SERVICE.enrol(target.getUuid(), actor);
                                     actor.sendMessage(Text.literal(
-                                                    ok ? "[Cadet] Enrolled " + target.getName().getString()
-                                                            : "[Cadet] Enrolment failed — check console."),
-                                            false);
+                                            ok ? "[Cadet] Enrolled " + target.getName().getString()
+                                                    : "[Cadet] Enrolment failed — check console."), false);
                                     return ok ? 1 : 0;
                                 })))
 
@@ -65,9 +48,14 @@ public class ProgressionCommands {
                         .then(CommandManager.argument("player", EntityArgumentType.player())
                                 .executes(ctx -> {
                                     ServerPlayerEntity actor = ctx.getSource().getPlayerOrThrow();
+                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(actor.getUuid());
+                                    if (!SecondDawnRP.PERMISSION_SERVICE.canCadetPromote(actor, actorProfile)) {
+                                        actor.sendMessage(Text.literal("[Cadet] No permission."), false);
+                                        return 0;
+                                    }
+
                                     ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
-                                    String result = SecondDawnRP.CADET_SERVICE.promote(
-                                            actor, target.getUuid());
+                                    String result = SecondDawnRP.CADET_SERVICE.promote(actor, target.getUuid());
                                     actor.sendMessage(Text.literal("[Cadet] " + result), false);
                                     return 1;
                                 })))
@@ -86,14 +74,20 @@ public class ProgressionCommands {
                                         })
                                         .executes(ctx -> {
                                             ServerPlayerEntity actor = ctx.getSource().getPlayerOrThrow();
+                                            PlayerProfile actorProfile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(actor.getUuid());
+                                            if (!SecondDawnRP.PERMISSION_SERVICE.canCadetGraduate(actor, actorProfile)) {
+                                                actor.sendMessage(Text.literal("[Cadet] No permission."), false);
+                                                return 0;
+                                            }
+
                                             ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
                                             String rankStr = StringArgumentType.getString(ctx, "startrank");
                                             Rank startRank = parseRankById(rankStr);
                                             if (startRank == null) {
-                                                actor.sendMessage(Text.literal(
-                                                        "[Cadet] Unknown rank: " + rankStr), false);
+                                                actor.sendMessage(Text.literal("[Cadet] Unknown rank: " + rankStr), false);
                                                 return 0;
                                             }
+
                                             String result = SecondDawnRP.CADET_SERVICE.proposeGraduation(
                                                     actor, target.getUuid(), startRank);
                                             actor.sendMessage(Text.literal("[Cadet] " + result), false);
@@ -104,9 +98,14 @@ public class ProgressionCommands {
                         .then(CommandManager.argument("player", EntityArgumentType.player())
                                 .executes(ctx -> {
                                     ServerPlayerEntity actor = ctx.getSource().getPlayerOrThrow();
+                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(actor.getUuid());
+                                    if (!SecondDawnRP.PERMISSION_SERVICE.canCadetApprove(actor, actorProfile)) {
+                                        actor.sendMessage(Text.literal("[Cadet] No permission."), false);
+                                        return 0;
+                                    }
+
                                     ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
-                                    String result = SecondDawnRP.CADET_SERVICE.approveGraduation(
-                                            actor, target.getUuid());
+                                    String result = SecondDawnRP.CADET_SERVICE.approveGraduation(actor, target.getUuid());
                                     actor.sendMessage(Text.literal("[Cadet] " + result), false);
                                     return 1;
                                 })))
@@ -122,18 +121,20 @@ public class ProgressionCommands {
         );
     }
 
-    // ── /officer ──────────────────────────────────────────────────────────────
-
     private static void registerOfficerCommands(CommandDispatcher<ServerCommandSource> dispatcher) {
         dispatcher.register(CommandManager.literal("officer")
-                .requires(src -> src.hasPermissionLevel(2))
-
                 .then(CommandManager.literal("commend")
                         .then(CommandManager.argument("player", EntityArgumentType.player())
                                 .then(CommandManager.argument("points", IntegerArgumentType.integer(1, 100))
                                         .then(CommandManager.argument("reason", StringArgumentType.greedyString())
                                                 .executes(ctx -> {
                                                     ServerPlayerEntity actor = ctx.getSource().getPlayerOrThrow();
+                                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(actor.getUuid());
+                                                    if (!SecondDawnRP.PERMISSION_SERVICE.canIssueCommendation(actor, actorProfile)) {
+                                                        actor.sendMessage(Text.literal("[Officer] No permission."), false);
+                                                        return 0;
+                                                    }
+
                                                     ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
                                                     int points = IntegerArgumentType.getInteger(ctx, "points");
                                                     String reason = StringArgumentType.getString(ctx, "reason");
@@ -145,17 +146,18 @@ public class ProgressionCommands {
         );
     }
 
-    // ── /admin slots ──────────────────────────────────────────────────────────
-
     private static void registerAdminSlotsCommands(CommandDispatcher<ServerCommandSource> dispatcher) {
         dispatcher.register(CommandManager.literal("admin")
-                .requires(src -> src.hasPermissionLevel(3))
-
                 .then(CommandManager.literal("slots")
 
                         .then(CommandManager.literal("list")
                                 .executes(ctx -> {
                                     ServerPlayerEntity actor = ctx.getSource().getPlayerOrThrow();
+                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(actor.getUuid());
+                                    if (!SecondDawnRP.PERMISSION_SERVICE.canManageOfficerSlots(actor, actorProfile)) {
+                                        actor.sendMessage(Text.literal("[Slots] No permission."), false);
+                                        return 0;
+                                    }
                                     printSlotList(actor);
                                     return 1;
                                 }))
@@ -174,12 +176,17 @@ public class ProgressionCommands {
                                         .then(CommandManager.argument("count", IntegerArgumentType.integer(0, 100))
                                                 .executes(ctx -> {
                                                     ServerPlayerEntity actor = ctx.getSource().getPlayerOrThrow();
+                                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(actor.getUuid());
+                                                    if (!SecondDawnRP.PERMISSION_SERVICE.canManageOfficerSlots(actor, actorProfile)) {
+                                                        actor.sendMessage(Text.literal("[Slots] No permission."), false);
+                                                        return 0;
+                                                    }
+
                                                     String rankStr = StringArgumentType.getString(ctx, "rank");
                                                     int count = IntegerArgumentType.getInteger(ctx, "count");
                                                     Rank rank = parseRankById(rankStr);
                                                     if (rank == null) {
-                                                        actor.sendMessage(Text.literal(
-                                                                "[Slots] Unknown rank: " + rankStr), false);
+                                                        actor.sendMessage(Text.literal("[Slots] Unknown rank: " + rankStr), false);
                                                         return 0;
                                                     }
                                                     SecondDawnRP.OFFICER_SLOT_SERVICE.setSlots(rank, count, actor);
@@ -194,18 +201,22 @@ public class ProgressionCommands {
                                         })
                                         .executes(ctx -> {
                                             ServerPlayerEntity actor = ctx.getSource().getPlayerOrThrow();
+                                            PlayerProfile actorProfile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(actor.getUuid());
+                                            if (!SecondDawnRP.PERMISSION_SERVICE.canManageOfficerSlots(actor, actorProfile)) {
+                                                actor.sendMessage(Text.literal("[Slots] No permission."), false);
+                                                return 0;
+                                            }
+
                                             String rankStr = StringArgumentType.getString(ctx, "rank");
                                             Rank rank = parseRankById(rankStr);
                                             if (rank == null) {
-                                                actor.sendMessage(Text.literal(
-                                                        "[Slots] Unknown rank: " + rankStr), false);
+                                                actor.sendMessage(Text.literal("[Slots] Unknown rank: " + rankStr), false);
                                                 return 0;
                                             }
                                             printQueue(actor, rank);
                                             return 1;
                                         }))))
 
-                // ── /admin position ───────────────────────────────────────────────────
                 .then(CommandManager.literal("position")
 
                         .then(CommandManager.literal("set")
@@ -218,13 +229,19 @@ public class ProgressionCommands {
                                                 })
                                                 .executes(ctx -> {
                                                     ServerPlayerEntity actor = ctx.getSource().getPlayerOrThrow();
+                                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(actor.getUuid());
+                                                    if (!SecondDawnRP.PERMISSION_SERVICE.canAssignShipPosition(actor, actorProfile)) {
+                                                        actor.sendMessage(Text.literal("[Position] No permission."), false);
+                                                        return 0;
+                                                    }
+
                                                     ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
                                                     String posStr = StringArgumentType.getString(ctx, "position");
                                                     ShipPosition position;
-                                                    try { position = ShipPosition.valueOf(posStr.toUpperCase()); }
-                                                    catch (IllegalArgumentException e) {
-                                                        actor.sendMessage(Text.literal(
-                                                                "[Position] Unknown position: " + posStr), false);
+                                                    try {
+                                                        position = ShipPosition.valueOf(posStr.toUpperCase());
+                                                    } catch (IllegalArgumentException e) {
+                                                        actor.sendMessage(Text.literal("[Position] Unknown position: " + posStr), false);
                                                         return 0;
                                                     }
                                                     String result = SecondDawnRP.SHIP_POSITION_SERVICE.assign(
@@ -237,6 +254,12 @@ public class ProgressionCommands {
                                 .then(CommandManager.argument("player", EntityArgumentType.player())
                                         .executes(ctx -> {
                                             ServerPlayerEntity actor = ctx.getSource().getPlayerOrThrow();
+                                            PlayerProfile actorProfile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(actor.getUuid());
+                                            if (!SecondDawnRP.PERMISSION_SERVICE.canAssignShipPosition(actor, actorProfile)) {
+                                                actor.sendMessage(Text.literal("[Position] No permission."), false);
+                                                return 0;
+                                            }
+
                                             ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
                                             String result = SecondDawnRP.SHIP_POSITION_SERVICE.clear(
                                                     actor, target.getUuid());
@@ -246,12 +269,9 @@ public class ProgressionCommands {
         );
     }
 
-    // Keeping position commands nested under /admin — separated into own method for clarity
     private static void registerAdminPositionCommands(CommandDispatcher<ServerCommandSource> dispatcher) {
-        // Already registered above under /admin position — no-op here
+        // no-op
     }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static void printCadetStatus(ServerPlayerEntity actor, UUID cadetUuid) {
         PlayerProfile profile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(cadetUuid);
@@ -269,7 +289,7 @@ public class ProgressionCommands {
         if (hasPending) {
             Rank proposed = SecondDawnRP.CADET_SERVICE.getPendingGraduationRank(cadetUuid);
             actor.sendMessage(Text.literal(
-                    "Pending Graduation: → " + proposed.getId() + " (awaiting Captain approval)"), false);
+                    "Pending Graduation: -> " + proposed.getId() + " (awaiting approval)"), false);
         }
     }
 
@@ -280,16 +300,14 @@ public class ProgressionCommands {
                 Rank.LIEUTENANT_COMMANDER, Rank.COMMANDER, Rank.CAPTAIN}) {
             int cap = SecondDawnRP.OFFICER_SLOT_SERVICE.getSlots(rank);
             int active = SecondDawnRP.OFFICER_SLOT_SERVICE.countActive(rank);
-            actor.sendMessage(Text.literal(
-                    rank.getId() + ": " + active + "/" + cap), false);
+            actor.sendMessage(Text.literal(rank.getId() + ": " + active + "/" + cap), false);
         }
     }
 
     private static void printQueue(ServerPlayerEntity actor, Rank rank) {
         var queue = SecondDawnRP.OFFICER_SLOT_SERVICE.getQueue(rank);
         if (queue.isEmpty()) {
-            actor.sendMessage(Text.literal(
-                    "[Slots] No players queued for " + rank.getId() + "."), false);
+            actor.sendMessage(Text.literal("[Slots] No players queued for " + rank.getId() + "."), false);
             return;
         }
         actor.sendMessage(Text.literal("=== Promotion Queue: " + rank.getId() + " ==="), false);

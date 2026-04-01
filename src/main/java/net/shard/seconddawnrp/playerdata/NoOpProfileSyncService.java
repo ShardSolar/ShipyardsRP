@@ -29,6 +29,10 @@ public class NoOpProfileSyncService implements ProfileSyncService {
         return CompletableFuture.completedFuture(null);
     }
 
+    public CompletableFuture<Void> syncBillets(ServerPlayerEntity player, Set<Billet> billets) {
+        return CompletableFuture.completedFuture(null);
+    }
+
     @Override
     public CompletableFuture<Void> syncCertifications(ServerPlayerEntity player, Set<Certification> certifications) {
         return CompletableFuture.completedFuture(null);

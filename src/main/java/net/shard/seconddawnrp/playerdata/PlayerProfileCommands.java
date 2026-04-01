@@ -26,17 +26,22 @@ public class PlayerProfileCommands {
         dispatcher.register(CommandManager.literal("profile")
                 .requires(source -> true)
 
-                .executes(ctx -> showSelf(ctx))
+                .executes(PlayerProfileCommands::showSelf)
 
                 .then(CommandManager.argument("player", EntityArgumentType.player())
-                        .requires(src -> src.hasPermissionLevel(2))
-                        .executes(ctx -> showOther(ctx)))
+                        .executes(PlayerProfileCommands::showOther))
 
                 .then(CommandManager.literal("setdivision")
                         .then(CommandManager.argument("division", StringArgumentType.word())
                                 .executes(ctx -> {
                                     ensureReady();
                                     ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
+                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_SERVICE.getLoaded(player.getUuid());
+                                    if (!SecondDawnRP.PERMISSION_SERVICE.canSetDivision(player, actorProfile)) {
+                                        ctx.getSource().sendError(Text.literal("No permission."));
+                                        return 0;
+                                    }
+
                                     Division division = Division.valueOf(
                                             StringArgumentType.getString(ctx, "division").toUpperCase());
                                     SecondDawnRP.PROFILE_SERVICE.setDivision(player, division);
@@ -50,6 +55,12 @@ public class PlayerProfileCommands {
                                 .executes(ctx -> {
                                     ensureReady();
                                     ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
+                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_SERVICE.getLoaded(player.getUuid());
+                                    if (!SecondDawnRP.PERMISSION_SERVICE.canSetRank(player, actorProfile)) {
+                                        ctx.getSource().sendError(Text.literal("No permission."));
+                                        return 0;
+                                    }
+
                                     Rank rank = Rank.valueOf(
                                             StringArgumentType.getString(ctx, "rank").toUpperCase());
                                     SecondDawnRP.PROFILE_SERVICE.setRank(player, rank);
@@ -63,6 +74,12 @@ public class PlayerProfileCommands {
                                 .executes(ctx -> {
                                     ensureReady();
                                     ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
+                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_SERVICE.getLoaded(player.getUuid());
+                                    if (!SecondDawnRP.PERMISSION_SERVICE.canAssignBillet(player, actorProfile)) {
+                                        ctx.getSource().sendError(Text.literal("No permission."));
+                                        return 0;
+                                    }
+
                                     Billet billet = Billet.valueOf(
                                             StringArgumentType.getString(ctx, "billet").toUpperCase());
                                     SecondDawnRP.PROFILE_SERVICE.addBillet(player, billet);
@@ -76,6 +93,12 @@ public class PlayerProfileCommands {
                                 .executes(ctx -> {
                                     ensureReady();
                                     ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
+                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_SERVICE.getLoaded(player.getUuid());
+                                    if (!SecondDawnRP.PERMISSION_SERVICE.canRevokeBillet(player, actorProfile)) {
+                                        ctx.getSource().sendError(Text.literal("No permission."));
+                                        return 0;
+                                    }
+
                                     Billet billet = Billet.valueOf(
                                             StringArgumentType.getString(ctx, "billet").toUpperCase());
                                     SecondDawnRP.PROFILE_SERVICE.removeBillet(player, billet);
@@ -84,11 +107,55 @@ public class PlayerProfileCommands {
                                     return 1;
                                 })))
 
+                .then(CommandManager.literal("addcert")
+                        .then(CommandManager.argument("cert", StringArgumentType.word())
+                                .executes(ctx -> {
+                                    ensureReady();
+                                    ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
+                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_SERVICE.getLoaded(player.getUuid());
+                                    if (!SecondDawnRP.PERMISSION_SERVICE.canGrantCertification(player, actorProfile)) {
+                                        ctx.getSource().sendError(Text.literal("No permission."));
+                                        return 0;
+                                    }
+
+                                    Certification cert = Certification.valueOf(
+                                            StringArgumentType.getString(ctx, "cert").toUpperCase());
+                                    SecondDawnRP.PROFILE_SERVICE.addCertification(player, cert);
+                                    ctx.getSource().sendFeedback(() ->
+                                            Text.literal("Added certification " + cert), false);
+                                    return 1;
+                                })))
+
+                .then(CommandManager.literal("removecert")
+                        .then(CommandManager.argument("cert", StringArgumentType.word())
+                                .executes(ctx -> {
+                                    ensureReady();
+                                    ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
+                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_SERVICE.getLoaded(player.getUuid());
+                                    if (!SecondDawnRP.PERMISSION_SERVICE.canRevokeCertification(player, actorProfile)) {
+                                        ctx.getSource().sendError(Text.literal("No permission."));
+                                        return 0;
+                                    }
+
+                                    Certification cert = Certification.valueOf(
+                                            StringArgumentType.getString(ctx, "cert").toUpperCase());
+                                    SecondDawnRP.PROFILE_SERVICE.removeCertification(player, cert);
+                                    ctx.getSource().sendFeedback(() ->
+                                            Text.literal("Removed certification " + cert), false);
+                                    return 1;
+                                })))
+
                 .then(CommandManager.literal("addpoints")
                         .then(CommandManager.argument("amount", IntegerArgumentType.integer())
                                 .executes(ctx -> {
                                     ensureReady();
                                     ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
+                                    PlayerProfile actorProfile = SecondDawnRP.PROFILE_SERVICE.getLoaded(player.getUuid());
+                                    if (!SecondDawnRP.PERMISSION_SERVICE.canAddRankPoints(player, actorProfile)) {
+                                        ctx.getSource().sendError(Text.literal("No permission."));
+                                        return 0;
+                                    }
+
                                     int amount = IntegerArgumentType.getInteger(ctx, "amount");
                                     SecondDawnRP.PROFILE_SERVICE.addRankPoints(player, amount);
                                     ctx.getSource().sendFeedback(() ->
@@ -113,6 +180,13 @@ public class PlayerProfileCommands {
 
     private static int showOther(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx) {
         try {
+            ServerPlayerEntity actor = ctx.getSource().getPlayerOrThrow();
+            PlayerProfile actorProfile = SecondDawnRP.PROFILE_SERVICE.getLoaded(actor.getUuid());
+            if (!SecondDawnRP.PERMISSION_SERVICE.canViewOtherProfile(actor, actorProfile)) {
+                ctx.getSource().sendError(Text.literal("No permission."));
+                return 0;
+            }
+
             ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
             PlayerProfile profile = SecondDawnRP.PROFILE_SERVICE.getLoaded(target.getUuid());
             if (profile == null) {
@@ -179,7 +253,6 @@ public class PlayerProfileCommands {
                 p.getKnownLanguages().isEmpty() ? "none"
                         : String.join(", ", p.getKnownLanguages())), false);
 
-        // Phase 8: show active condition count instead of single LTI flag
         int conditionCount = p.getActiveMedicalConditionIds().size();
         source.sendFeedback(() -> row("Medical",
                 conditionCount == 0 ? "No active conditions"
@@ -193,10 +266,10 @@ public class PlayerProfileCommands {
         if (gmView) {
             source.sendFeedback(() -> Text.literal("— GM —").formatted(Formatting.DARK_GRAY), false);
             source.sendFeedback(() -> row("Minecraft Name", p.getServiceName()), false);
-            source.sendFeedback(() -> row("Player UUID",    p.getPlayerId().toString()), false);
+            source.sendFeedback(() -> row("Player UUID", p.getPlayerId().toString()), false);
             source.sendFeedback(() -> row("Character ID",
                     p.getCharacterId() != null ? p.getCharacterId() : "none"), false);
-            source.sendFeedback(() -> row("Permadeath",     String.valueOf(p.isPermadeathConsent())), false);
+            source.sendFeedback(() -> row("Permadeath", String.valueOf(p.isPermadeathConsent())), false);
             source.sendFeedback(() -> row("Univ. Translator",
                     String.valueOf(p.hasUniversalTranslator())), false);
             if (p.getCharacterCreatedAt() > 0) {
@@ -207,7 +280,6 @@ public class PlayerProfileCommands {
                 source.sendFeedback(() -> row("Died",
                         DATE_FMT.format(Instant.ofEpochMilli(p.getDeceasedAt()))), false);
             }
-            // GM sees condition IDs directly
             if (!p.getActiveMedicalConditionIds().isEmpty()) {
                 source.sendFeedback(() -> row("Condition IDs",
                         String.join(", ", p.getActiveMedicalConditionIds())), false);
@@ -224,7 +296,8 @@ public class PlayerProfileCommands {
     }
 
     private static void ensureReady() {
-        if (SecondDawnRP.PROFILE_SERVICE == null)
+        if (SecondDawnRP.PROFILE_SERVICE == null) {
             throw new IllegalStateException("Profile services not initialized.");
+        }
     }
 }

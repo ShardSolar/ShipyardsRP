@@ -18,10 +18,6 @@ import java.util.concurrent.ConcurrentHashMap;
  * Intercepts right-clicks on players for:
  * 1. Gurney attachment
  * 2. Medical treatment step item administration
- *
- * Per-actor cooldown prevents spam on held right-click.
- * On successful gurney attach, stamps GurneyItem.LAST_ATTACH_MS so that
- * the use() call that fires immediately after doesn't release the patient.
  */
 public class MedicalInteractListener {
 
@@ -45,29 +41,30 @@ public class MedicalInteractListener {
         ItemStack held = officer.getMainHandStack();
         if (held.isEmpty()) return ActionResult.PASS;
 
-        // Per-actor cooldown
+        var officerProfile = SecondDawnRP.PROFILE_MANAGER.getLoadedProfile(officer.getUuid());
+        if (!SecondDawnRP.PERMISSION_SERVICE.canUseMedicalActions(officer, officerProfile)) {
+            return ActionResult.PASS;
+        }
+
         long now = System.currentTimeMillis();
         Long last = INTERACT_COOLDOWN.get(officer.getUuid());
         if (last != null && now - last < COOLDOWN_MS) {
-            // On cooldown — consume gurney clicks silently, pass others
             return held.getItem() == ModItems.GURNEY
-                    ? ActionResult.SUCCESS : ActionResult.PASS;
+                    ? ActionResult.SUCCESS
+                    : ActionResult.PASS;
         }
         INTERACT_COOLDOWN.put(officer.getUuid(), now);
 
-        // ── Gurney attachment ─────────────────────────────────────────────────
         if (held.getItem() == ModItems.GURNEY) {
             if (SecondDawnRP.GURNEY_SERVICE != null) {
                 boolean attached = SecondDawnRP.GURNEY_SERVICE.attach(officer, target);
                 if (attached) {
-                    // Stamp attach time so GurneyItem.use() doesn't immediately release
                     GurneyItem.LAST_ATTACH_MS.put(officer.getUuid(), now);
                 }
             }
             return ActionResult.SUCCESS;
         }
 
-        // ── Treatment step administration ─────────────────────────────────────
         MedicalService.TreatmentStepResult result =
                 SecondDawnRP.MEDICAL_SERVICE.attemptTreatmentStep(officer, target, held);
 
@@ -77,11 +74,11 @@ public class MedicalInteractListener {
                  REQUIRES_SURGERY,
                  INSUFFICIENT_ITEMS,
                  TIMING_FAILURE,
-                 TIMING_NOT_YET   -> ActionResult.SUCCESS;
+                 TIMING_NOT_YET -> ActionResult.SUCCESS;
             case NO_MATCHING_STEP,
                  NO_CONDITIONS,
                  NO_PATIENT_PROFILE,
-                 NO_AUTHORITY     -> ActionResult.PASS;
+                 NO_AUTHORITY -> ActionResult.PASS;
         };
     }
 }

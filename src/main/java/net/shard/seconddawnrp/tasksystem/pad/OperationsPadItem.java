@@ -9,7 +9,7 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.TypedActionResult;
 import net.minecraft.world.World;
-import net.shard.seconddawnrp.tasksystem.util.TaskPermissionUtil;
+import net.shard.seconddawnrp.SecondDawnRP;
 
 public class OperationsPadItem extends Item {
 
@@ -29,7 +29,12 @@ public class OperationsPadItem extends Item {
             return TypedActionResult.pass(stack);
         }
 
-        if (!TaskPermissionUtil.canOpenOperationsPad(serverPlayer)) {
+        var profile = SecondDawnRP.PROFILE_MANAGER.getOrLoadProfile(
+                serverPlayer.getUuid(),
+                serverPlayer.getName().getString()
+        );
+
+        if (!SecondDawnRP.PERMISSION_SERVICE.canOpenOperationsPad(serverPlayer, profile)) {
             serverPlayer.sendMessage(Text.literal("You do not have permission to use the Operations PAD."), false);
             return TypedActionResult.fail(stack);
         }

@@ -182,6 +182,6 @@ public class TerminalDesignatorToolItem extends Item {
     }
 
     private boolean hasPermission(ServerPlayerEntity player) {
-        return player.hasPermissionLevel(2);
+        return SecondDawnRP.PERMISSION_SERVICE.canUseTerminalDesignatorTool(player);
     }
 }

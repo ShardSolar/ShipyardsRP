@@ -143,6 +143,14 @@ public class OfficerSlotService {
                                     + "Contact your Chief Officer or First Officer to proceed.")
                     .formatted(Formatting.GREEN), false);
         }
+
+        server.getPlayerManager().getPlayerList().stream()
+                .filter(p -> {
+                    PlayerProfile pp = profileManager.getLoadedProfile(p.getUuid());
+                    return pp != null && SecondDawnRP.PERMISSION_SERVICE.canManageOfficerSlots(p, pp);
+                })
+                .forEach(p -> p.sendMessage(
+                        Text.literal(msg).formatted(Formatting.GOLD), false));
     }
 
     // ── Admin slot management ─────────────────────────────────────────────────

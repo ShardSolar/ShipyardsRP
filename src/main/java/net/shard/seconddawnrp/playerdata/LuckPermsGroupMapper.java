@@ -20,4 +20,17 @@ public class LuckPermsGroupMapper {
     public String getCertificationNode(Certification certification) {
         return "st.cert." + certification.getId();
     }
+
+    // Optional clearer aliases
+    public String getDivisionGroupName(Division division) {
+        return getDivisionGroup(division);
+    }
+
+    public String getRankGroupName(Rank rank) {
+        return getRankGroup(rank);
+    }
+
+    public String getBilletGroupName(Billet billet) {
+        return getBilletGroup(billet);
+    }
 }
