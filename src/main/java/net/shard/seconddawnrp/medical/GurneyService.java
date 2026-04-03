@@ -8,22 +8,26 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
+import net.shard.seconddawnrp.playerdata.PlayerProfile;
 import net.shard.seconddawnrp.playerdata.PlayerProfileManager;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * V1 gurney transport system.
+ * Gurney transport system.
  *
- * Scope-aligned behavior:
- * - Attach only to downed players
- * - Spawn invisible armor stand with downed indicator name tag
- * - Carrier leads the stand physically
- * - Detach by item reuse or /gurney release
- * - Cleanup on detach and server stop
+ * Behavior:
+ * - Downed players can be picked up immediately without confirmation.
+ * - Players with medical conditions can be picked up, but must confirm first.
+ * - Healthy players cannot be placed on a gurney.
+ * - Carrier leads the stand physically.
+ * - Detach by item reuse or /gurney release.
+ * - Cleanup on detach and server stop.
  */
 public class GurneyService {
+
+    private static final long PICKUP_REQUEST_TIMEOUT_MS = 20_000L;
 
     private final PlayerProfileManager profileManager;
 
@@ -33,12 +37,21 @@ public class GurneyService {
     /** patientUuid -> carrierUuid */
     private final Map<UUID, UUID> patientToCarrier = new ConcurrentHashMap<>();
 
+    /** patientUuid -> pending request */
+    private final Map<UUID, PendingPickupRequest> pendingRequests = new ConcurrentHashMap<>();
+
     public GurneyService(PlayerProfileManager profileManager) {
         this.profileManager = profileManager;
     }
 
-    // ── Attach ────────────────────────────────────────────────────────────────
+    // ── Attach / request ─────────────────────────────────────────────────────
 
+    /**
+     * Main entrypoint:
+     * - downed patient => immediate attach
+     * - patient with condition => request confirmation
+     * - otherwise reject
+     */
     public boolean attach(ServerPlayerEntity carrier, ServerPlayerEntity patient) {
         if (carrier.getUuid().equals(patient.getUuid())) {
             carrier.sendMessage(Text.literal("[Medical] You cannot place yourself on a gurney.")
@@ -52,8 +65,56 @@ public class GurneyService {
             return false;
         }
 
-        if (!isDowned(patient.getUuid())) {
-            carrier.sendMessage(Text.literal("[Medical] Gurney can only attach to a downed patient.")
+        if (byCarrier.containsKey(carrier.getUuid())) {
+            carrier.sendMessage(Text.literal("[Medical] You are already transporting a patient.")
+                    .formatted(Formatting.YELLOW), false);
+            return false;
+        }
+
+        if (patientToCarrier.containsKey(patient.getUuid())) {
+            carrier.sendMessage(Text.literal("[Medical] That patient is already on a gurney.")
+                    .formatted(Formatting.YELLOW), false);
+            return false;
+        }
+
+        boolean downed = isDowned(patient.getUuid());
+        boolean hasCondition = hasAnyMedicalCondition(patient.getUuid());
+
+        if (!downed && !hasCondition) {
+            carrier.sendMessage(Text.literal("[Medical] Gurney can only pick up downed patients or patients with a medical condition.")
+                    .formatted(Formatting.YELLOW), false);
+            return false;
+        }
+
+        if (downed) {
+            return attachImmediate(carrier, patient);
+        }
+
+        return requestAttach(carrier, patient);
+    }
+
+    /**
+     * Sends a confirmation request to a conscious patient with a medical condition.
+     */
+    public boolean requestAttach(ServerPlayerEntity carrier, ServerPlayerEntity patient) {
+        if (carrier.getUuid().equals(patient.getUuid())) {
+            carrier.sendMessage(Text.literal("[Medical] You cannot place yourself on a gurney.")
+                    .formatted(Formatting.RED), false);
+            return false;
+        }
+
+        if (carrier.getServerWorld() != patient.getServerWorld()) {
+            carrier.sendMessage(Text.literal("[Medical] Patient must be in the same world.")
+                    .formatted(Formatting.RED), false);
+            return false;
+        }
+
+        if (isDowned(patient.getUuid())) {
+            return attachImmediate(carrier, patient);
+        }
+
+        if (!hasAnyMedicalCondition(patient.getUuid())) {
+            carrier.sendMessage(Text.literal("[Medical] That player has no medical condition and does not need a gurney.")
                     .formatted(Formatting.YELLOW), false);
             return false;
         }
@@ -70,20 +131,152 @@ public class GurneyService {
             return false;
         }
 
+        PendingPickupRequest existing = pendingRequests.get(patient.getUuid());
+        if (existing != null && !isExpired(existing)) {
+            carrier.sendMessage(Text.literal("[Medical] That patient already has a pending gurney request.")
+                    .formatted(Formatting.YELLOW), false);
+            return false;
+        }
+
+        PendingPickupRequest request = new PendingPickupRequest(
+                carrier.getUuid(),
+                patient.getUuid(),
+                carrier.getServerWorld().getRegistryKey().getValue().toString(),
+                System.currentTimeMillis()
+        );
+        pendingRequests.put(patient.getUuid(), request);
+
+        carrier.sendMessage(Text.literal("[Medical] Gurney pickup request sent to "
+                        + patient.getName().getString() + ".")
+                .formatted(Formatting.AQUA), false);
+
+        patient.sendMessage(
+                Text.literal("[Medical] ")
+                        .formatted(Formatting.AQUA)
+                        .append(Text.literal(carrier.getName().getString()).formatted(Formatting.WHITE))
+                        .append(Text.literal(" wants to place you on a gurney. Use ")
+                                .formatted(Formatting.AQUA))
+                        .append(Text.literal("/gurney accept").formatted(Formatting.GREEN))
+                        .append(Text.literal(" or ").formatted(Formatting.GRAY))
+                        .append(Text.literal("/gurney deny").formatted(Formatting.RED)),
+                false
+        );
+
+        return true;
+    }
+
+    /**
+     * Patient accepts a pending pickup request.
+     */
+    public boolean acceptPendingPickup(ServerPlayerEntity patient) {
+        PendingPickupRequest request = pendingRequests.get(patient.getUuid());
+        if (request == null) {
+            patient.sendMessage(Text.literal("[Medical] You have no pending gurney request.")
+                    .formatted(Formatting.YELLOW), false);
+            return false;
+        }
+
+        if (isExpired(request)) {
+            pendingRequests.remove(patient.getUuid());
+            patient.sendMessage(Text.literal("[Medical] That gurney request expired.")
+                    .formatted(Formatting.YELLOW), false);
+            return false;
+        }
+
+        MinecraftServer server = patient.getServer();
+        if (server == null) {
+            pendingRequests.remove(patient.getUuid());
+            return false;
+        }
+
+        ServerPlayerEntity carrier = server.getPlayerManager().getPlayer(request.carrierUuid());
+        if (carrier == null || !carrier.isAlive()) {
+            pendingRequests.remove(patient.getUuid());
+            patient.sendMessage(Text.literal("[Medical] The carrier is no longer available.")
+                    .formatted(Formatting.YELLOW), false);
+            return false;
+        }
+
+        pendingRequests.remove(patient.getUuid());
+        return attachImmediate(carrier, patient);
+    }
+
+    /**
+     * Patient denies a pending pickup request.
+     */
+    public boolean denyPendingPickup(ServerPlayerEntity patient) {
+        PendingPickupRequest request = pendingRequests.remove(patient.getUuid());
+        if (request == null) {
+            patient.sendMessage(Text.literal("[Medical] You have no pending gurney request.")
+                    .formatted(Formatting.YELLOW), false);
+            return false;
+        }
+
+        MinecraftServer server = patient.getServer();
+        if (server != null) {
+            ServerPlayerEntity carrier = server.getPlayerManager().getPlayer(request.carrierUuid());
+            if (carrier != null) {
+                carrier.sendMessage(Text.literal("[Medical] "
+                                + patient.getName().getString()
+                                + " declined the gurney request.")
+                        .formatted(Formatting.YELLOW), false);
+            }
+        }
+
+        patient.sendMessage(Text.literal("[Medical] Gurney request denied.")
+                .formatted(Formatting.YELLOW), false);
+        return true;
+    }
+
+    /**
+     * Actual attach implementation. Used for downed patients immediately and
+     * for conscious patients after acceptance.
+     */
+    private boolean attachImmediate(ServerPlayerEntity carrier, ServerPlayerEntity patient) {
+        if (carrier.getUuid().equals(patient.getUuid())) {
+            carrier.sendMessage(Text.literal("[Medical] You cannot place yourself on a gurney.")
+                    .formatted(Formatting.RED), false);
+            return false;
+        }
+
+        if (carrier.getServerWorld() != patient.getServerWorld()) {
+            carrier.sendMessage(Text.literal("[Medical] Patient must be in the same world.")
+                    .formatted(Formatting.RED), false);
+            return false;
+        }
+
+        if (byCarrier.containsKey(carrier.getUuid())) {
+            carrier.sendMessage(Text.literal("[Medical] You are already transporting a patient.")
+                    .formatted(Formatting.YELLOW), false);
+            return false;
+        }
+
+        if (patientToCarrier.containsKey(patient.getUuid())) {
+            carrier.sendMessage(Text.literal("[Medical] That patient is already on a gurney.")
+                    .formatted(Formatting.YELLOW), false);
+            return false;
+        }
+
+        if (!isDowned(patient.getUuid()) && !hasAnyMedicalCondition(patient.getUuid())) {
+            carrier.sendMessage(Text.literal("[Medical] That patient is not eligible for gurney transport.")
+                    .formatted(Formatting.YELLOW), false);
+            return false;
+        }
+
         World world = carrier.getWorld();
 
         ArmorStandEntity stand = new ArmorStandEntity(EntityType.ARMOR_STAND, world);
-        // Offset stand below ground so patient sits at correct height.
-        // ArmorStandEntity mounts passengers ~1.8 blocks above its feet,
-        // so we need to sink it ~1.6 blocks to get the patient near ground level.
         stand.setPosition(patient.getX(), patient.getY() - 1.6, patient.getZ());
         stand.setInvisible(true);
         stand.setInvulnerable(true);
         stand.setNoGravity(true);
         stand.setSilent(true);
 
-        // Downed indicator — visible to all nearby players
-        stand.setCustomName(Text.literal("⬇ DOWN ⬇").formatted(Formatting.RED));
+        if (isDowned(patient.getUuid())) {
+            stand.setCustomName(Text.literal("⬇ DOWN ⬇").formatted(Formatting.RED));
+        } else {
+            stand.setCustomName(Text.literal("✚ PATIENT ✚").formatted(Formatting.AQUA));
+        }
         stand.setCustomNameVisible(true);
 
         world.spawnEntity(stand);
@@ -103,6 +296,7 @@ public class GurneyService {
 
         byCarrier.put(carrier.getUuid(), session);
         patientToCarrier.put(patient.getUuid(), carrier.getUuid());
+        pendingRequests.remove(patient.getUuid());
 
         carrier.sendMessage(Text.literal("[Medical] Patient loaded onto gurney.")
                 .formatted(Formatting.GREEN), false);
@@ -153,6 +347,26 @@ public class GurneyService {
     // ── Tick ─────────────────────────────────────────────────────────────────
 
     public void tick(MinecraftServer server) {
+        if (!pendingRequests.isEmpty()) {
+            for (PendingPickupRequest request : new ArrayList<>(pendingRequests.values())) {
+                if (isExpired(request)) {
+                    pendingRequests.remove(request.patientUuid());
+
+                    ServerPlayerEntity carrier = server.getPlayerManager().getPlayer(request.carrierUuid());
+                    ServerPlayerEntity patient = server.getPlayerManager().getPlayer(request.patientUuid());
+
+                    if (carrier != null) {
+                        carrier.sendMessage(Text.literal("[Medical] Gurney request expired.")
+                                .formatted(Formatting.YELLOW), false);
+                    }
+                    if (patient != null) {
+                        patient.sendMessage(Text.literal("[Medical] Gurney request expired.")
+                                .formatted(Formatting.YELLOW), false);
+                    }
+                }
+            }
+        }
+
         if (byCarrier.isEmpty()) return;
 
         List<GurneySession> toDetach = new ArrayList<>();
@@ -171,7 +385,7 @@ public class GurneyService {
                 continue;
             }
 
-            if (!isDowned(patient.getUuid())) {
+            if (!isDowned(patient.getUuid()) && !hasAnyMedicalCondition(patient.getUuid())) {
                 toDetach.add(session);
                 continue;
             }
@@ -187,12 +401,10 @@ public class GurneyService {
                 continue;
             }
 
-            // Keep stand just in front of carrier, sunk below ground for correct patient height
             Vec3d forward = Vec3d.fromPolar(0.0F, carrier.getYaw()).normalize();
             Vec3d targetPos = carrier.getPos().add(forward.multiply(0.9));
             stand.setPosition(targetPos.x, carrier.getY() - 1.6, targetPos.z);
 
-            // Keep patient mounted
             if (patient.getVehicle() != stand) {
                 patient.startRiding(stand, true);
             }
@@ -211,6 +423,7 @@ public class GurneyService {
         }
         byCarrier.clear();
         patientToCarrier.clear();
+        pendingRequests.clear();
     }
 
     // ── Queries ───────────────────────────────────────────────────────────────
@@ -221,6 +434,11 @@ public class GurneyService {
 
     public boolean isPatientOnGurney(UUID uuid) {
         return patientToCarrier.containsKey(uuid);
+    }
+
+    public boolean hasPendingPickupRequest(UUID patientUuid) {
+        PendingPickupRequest request = pendingRequests.get(patientUuid);
+        return request != null && !isExpired(request);
     }
 
     // ── Internal ─────────────────────────────────────────────────────────────
@@ -265,11 +483,29 @@ public class GurneyService {
                 && net.shard.seconddawnrp.SecondDawnRP.DOWNED_SERVICE.isDowned(playerUuid);
     }
 
-    // ── Session record ────────────────────────────────────────────────────────
+    private boolean hasAnyMedicalCondition(UUID playerUuid) {
+        PlayerProfile profile = profileManager.getLoadedProfile(playerUuid);
+        if (profile == null) return false;
+
+        return !profile.getActiveMedicalConditionIds().isEmpty();
+    }
+
+    private boolean isExpired(PendingPickupRequest request) {
+        return System.currentTimeMillis() - request.createdAtEpochMs() > PICKUP_REQUEST_TIMEOUT_MS;
+    }
+
+    // ── Records ──────────────────────────────────────────────────────────────
 
     public record GurneySession(
             UUID carrierUuid,
             UUID patientUuid,
             UUID standUuid
+    ) {}
+
+    public record PendingPickupRequest(
+            UUID carrierUuid,
+            UUID patientUuid,
+            String worldKey,
+            long createdAtEpochMs
     ) {}
 }

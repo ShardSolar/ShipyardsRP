@@ -2,7 +2,6 @@ package net.shard.seconddawnrp.gmevent.command;
 
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
-import net.minecraft.command.argument.EntityArgumentType;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
@@ -11,7 +10,6 @@ import net.minecraft.util.math.BlockPos;
 import net.shard.seconddawnrp.SecondDawnRP;
 import net.shard.seconddawnrp.gmevent.data.ActiveEvent;
 import net.shard.seconddawnrp.gmevent.data.EncounterTemplate;
-import net.shard.seconddawnrp.gmevent.data.SpawnBehaviour;
 import net.shard.seconddawnrp.playerdata.PlayerProfile;
 
 import java.util.List;
@@ -26,7 +24,6 @@ public final class GmEventCommands {
     public static void register(CommandDispatcher<ServerCommandSource> dispatcher) {
         dispatcher.register(literal("gmevent")
 
-                // /gmevent spawn <templateId>
                 .then(literal("spawn")
                         .then(argument("templateId", StringArgumentType.word())
                                 .executes(context -> {
@@ -58,7 +55,6 @@ public final class GmEventCommands {
                                     }
                                 })))
 
-                // /gmevent stop <eventId>
                 .then(literal("stop")
                         .then(argument("eventId", StringArgumentType.word())
                                 .executes(context -> {
@@ -78,7 +74,6 @@ public final class GmEventCommands {
                                     }
                                 })))
 
-                // /gmevent stopall
                 .then(literal("stopall")
                         .executes(context -> {
                             ServerPlayerEntity player = getRequiredPlayer(context.getSource());
@@ -91,7 +86,22 @@ public final class GmEventCommands {
                             return 1;
                         }))
 
-                // /gmevent list
+                // New: despawn everything spawned by tool or events/blocks
+                .then(literal("despawnall")
+                        .executes(context -> {
+                            ServerPlayerEntity player = getRequiredPlayer(context.getSource());
+                            if (!hasGmPermission(player)) {
+                                context.getSource().sendError(Text.literal("[GM] No permission."));
+                                return 0;
+                            }
+
+                            int removed = SecondDawnRP.GM_EVENT_SERVICE.despawnAllSpawnedMobs();
+                            context.getSource().sendMessage(
+                                    Text.literal("[GM] Despawned " + removed + " total spawned mob(s).")
+                            );
+                            return 1;
+                        }))
+
                 .then(literal("list")
                         .executes(context -> {
                             ServerPlayerEntity player = getRequiredPlayer(context.getSource());
@@ -116,7 +126,6 @@ public final class GmEventCommands {
                             return 1;
                         }))
 
-                // /gmevent link <eventId> <taskId>
                 .then(literal("link")
                         .then(argument("eventId", StringArgumentType.word())
                                 .then(argument("taskId", StringArgumentType.word())
@@ -131,7 +140,7 @@ public final class GmEventCommands {
                                             return 1;
                                         }))))
 
-                // /gmevent templates
+
                 .then(literal("templates")
                         .executes(context -> {
                             ServerPlayerEntity player = getRequiredPlayer(context.getSource());
@@ -150,13 +159,11 @@ public final class GmEventCommands {
                                         " [" + t.getId() + "] " + t.getDisplayName()
                                                 + " | mob=" + t.getMobTypeId()
                                                 + " | count=" + t.getTotalSpawnCount()
-                                                + " | behaviour=" + t.getSpawnBehaviour().name()
                                 ));
                             }
                             return 1;
                         }))
 
-                // /gmevent spawn <templateId> link <taskId>
                 .then(literal("spawnlinked")
                         .then(argument("templateId", StringArgumentType.word())
                                 .then(argument("taskId", StringArgumentType.word())
@@ -166,6 +173,7 @@ public final class GmEventCommands {
                                                 context.getSource().sendError(Text.literal("[GM] No permission."));
                                                 return 0;
                                             }
+
                                             String templateId = StringArgumentType.getString(context, "templateId");
                                             String taskId = StringArgumentType.getString(context, "taskId");
                                             ServerWorld world = player.getServerWorld();
@@ -196,7 +204,10 @@ public final class GmEventCommands {
     }
 
     private static ServerPlayerEntity getRequiredPlayer(ServerCommandSource source) {
-        try { return source.getPlayer(); }
-        catch (Exception e) { return null; }
+        try {
+            return source.getPlayer();
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

@@ -12,6 +12,8 @@ import net.shard.seconddawnrp.SecondDawnRP;
 /**
  * /gurney commands.
  *
+ * /gurney accept            — accept pending pickup request
+ * /gurney deny              — deny pending pickup request
  * /gurney release           — carrier releases their current patient
  * /gurney release <player>  — GM force-releases a specific carrier
  * /gurney down <player>     — GM manually downs a player (for testing/events)
@@ -25,9 +27,31 @@ public class GurneyCommands {
         dispatcher.register(
                 CommandManager.literal("gurney")
 
-                        // /gurney release — carrier releases themselves
+                        .then(CommandManager.literal("accept")
+                                .executes(ctx -> {
+                                    try {
+                                        ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
+                                        boolean ok = SecondDawnRP.GURNEY_SERVICE.acceptPendingPickup(player);
+                                        return ok ? 1 : 0;
+                                    } catch (Exception e) {
+                                        ctx.getSource().sendError(Text.literal("Error: " + e.getMessage()));
+                                        return 0;
+                                    }
+                                }))
+
+                        .then(CommandManager.literal("deny")
+                                .executes(ctx -> {
+                                    try {
+                                        ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
+                                        boolean ok = SecondDawnRP.GURNEY_SERVICE.denyPendingPickup(player);
+                                        return ok ? 1 : 0;
+                                    } catch (Exception e) {
+                                        ctx.getSource().sendError(Text.literal("Error: " + e.getMessage()));
+                                        return 0;
+                                    }
+                                }))
+
                         .then(CommandManager.literal("release")
-                                // /gurney release (self)
                                 .executes(ctx -> {
                                     try {
                                         ServerPlayerEntity player =
@@ -40,7 +64,6 @@ public class GurneyCommands {
                                         return 0;
                                     }
                                 })
-                                // /gurney release <player> — GM releases specific carrier
                                 .then(CommandManager.argument("carrier",
                                                 EntityArgumentType.player())
                                         .requires(src -> src.hasPermissionLevel(3))
@@ -61,7 +84,6 @@ public class GurneyCommands {
                                             }
                                         })))
 
-                        // /gurney down <player> — GM downs a player manually
                         .then(CommandManager.literal("down")
                                 .requires(src -> src.hasPermissionLevel(3))
                                 .then(CommandManager.argument("player", EntityArgumentType.player())
@@ -83,7 +105,6 @@ public class GurneyCommands {
                                             }
                                         })))
 
-                        // /gurney revive <player> — GM force-revives
                         .then(CommandManager.literal("revive")
                                 .requires(src -> src.hasPermissionLevel(3))
                                 .then(CommandManager.argument("player", EntityArgumentType.player())

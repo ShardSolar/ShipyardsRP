@@ -30,9 +30,9 @@ import java.util.Optional;
  */
 public class TerminalDesignatorService {
 
-    private static final float PARTICLE_SIZE      = 0.8f;
-    private static final int   PARTICLES_PER_EDGE = 8;
-    private static final double REACH             = 5.0;
+    private static final float PARTICLE_SIZE = 0.8f;
+    private static final int PARTICLES_PER_EDGE = 8;
+    private static final double REACH = 5.0;
 
     // ── Interact dispatch ─────────────────────────────────────────────────────
 
@@ -43,11 +43,6 @@ public class TerminalDesignatorService {
 
         TerminalDesignatorEntry entry = optional.get();
         TerminalDesignatorType type = entry.getType();
-
-        if (!hasPermission(player, type)) {
-            player.sendMessage(Text.literal("§c[" + type.getDisplayName() + "] Access denied."), false);
-            return true;
-        }
 
         if (!type.isImplemented()) {
             player.sendMessage(Text.literal(
@@ -62,13 +57,14 @@ public class TerminalDesignatorService {
 
     private void openScreen(ServerPlayerEntity player, TerminalDesignatorType type) {
         switch (type) {
-
             case OPS_TERMINAL -> {
                 if (!TaskPermissionUtil.canOpenOperationsPad(player)) {
                     player.sendMessage(Text.literal(
-                            "You do not have permission to use the Operations PAD."), false);
+                            "§cYou do not have permission to use the Operations PAD."
+                    ), false);
                     return;
                 }
+
                 player.openHandledScreen(new SimpleNamedScreenHandlerFactory(
                         (syncId, inventory, p) -> new AdminTaskScreenHandler(syncId, inventory),
                         Text.literal("Operations PAD")
@@ -76,8 +72,10 @@ public class TerminalDesignatorService {
             }
 
             case ENGINEERING_CONSOLE -> {
-                ServerPlayNetworking.send(player,
-                        OpenEngineeringPadS2CPacket.fromService(SecondDawnRP.DEGRADATION_SERVICE));
+                ServerPlayNetworking.send(
+                        player,
+                        OpenEngineeringPadS2CPacket.fromService(SecondDawnRP.DEGRADATION_SERVICE)
+                );
             }
 
             case ROSTER_CONSOLE -> {
@@ -90,7 +88,8 @@ public class TerminalDesignatorService {
 
             default -> player.sendMessage(
                     Text.literal("§7[Terminal] Screen routing not yet wired for: " + type.name()),
-                    false);
+                    false
+            );
         }
     }
 
@@ -104,7 +103,6 @@ public class TerminalDesignatorService {
     public void tickActionBarPrompt(ServerPlayerEntity player) {
         if (!(player.getWorld() instanceof ServerWorld world)) return;
 
-        // Server-side raycast using the player's eye position and look direction
         var eyePos = player.getEyePos();
         var lookVec = player.getRotationVec(1.0f);
         var endPos = eyePos.add(lookVec.multiply(REACH));
@@ -135,7 +133,6 @@ public class TerminalDesignatorService {
                         ? "  §7Right-click to open"
                         : "  §8Not yet active"));
 
-        // true = action bar (above XP bar)
         player.sendMessage(prompt, true);
     }
 
@@ -153,6 +150,7 @@ public class TerminalDesignatorService {
         BlockPos center = player.getBlockPos();
         List<TerminalDesignatorEntry> nearby =
                 SecondDawnRP.TERMINAL_DESIGNATOR_REGISTRY.getNearby(worldKey, center, 32);
+
         for (TerminalDesignatorEntry entry : nearby) {
             spawnBlockOutline(world, player, entry.getPos(), entry.getType().getGlowColor());
         }
@@ -163,8 +161,8 @@ public class TerminalDesignatorService {
     private void spawnBlockOutline(ServerWorld world, ServerPlayerEntity player,
                                    BlockPos pos, int rgb) {
         float r = ((rgb >> 16) & 0xFF) / 255f;
-        float g = ((rgb >> 8)  & 0xFF) / 255f;
-        float b = (rgb         & 0xFF) / 255f;
+        float g = ((rgb >> 8) & 0xFF) / 255f;
+        float b = (rgb & 0xFF) / 255f;
 
         double x0 = pos.getX() - 0.02, y0 = pos.getY() - 0.02, z0 = pos.getZ() - 0.02;
         double x1 = pos.getX() + 1.02, y1 = pos.getY() + 1.02, z1 = pos.getZ() + 1.02;
@@ -175,10 +173,12 @@ public class TerminalDesignatorService {
         spawnEdge(world, player, fx, x1, y0, z0, x1, y0, z1);
         spawnEdge(world, player, fx, x1, y0, z1, x0, y0, z1);
         spawnEdge(world, player, fx, x0, y0, z1, x0, y0, z0);
+
         spawnEdge(world, player, fx, x0, y1, z0, x1, y1, z0);
         spawnEdge(world, player, fx, x1, y1, z0, x1, y1, z1);
         spawnEdge(world, player, fx, x1, y1, z1, x0, y1, z1);
         spawnEdge(world, player, fx, x0, y1, z1, x0, y1, z0);
+
         spawnEdge(world, player, fx, x0, y0, z0, x0, y1, z0);
         spawnEdge(world, player, fx, x1, y0, z0, x1, y1, z0);
         spawnEdge(world, player, fx, x1, y0, z1, x1, y1, z1);
@@ -196,16 +196,6 @@ public class TerminalDesignatorService {
                     y0 + (y1 - y0) * t,
                     z0 + (z1 - z0) * t,
                     1, 0, 0, 0, 0);
-        }
-    }
-
-    // ── Permission ────────────────────────────────────────────────────────────
-
-    private boolean hasPermission(ServerPlayerEntity player, TerminalDesignatorType type) {
-        try {
-            return SecondDawnRP.PERMISSION_SERVICE.hasPermission(player, type.getPermissionNode());
-        } catch (Exception e) {
-            return player.hasPermissionLevel(2);
         }
     }
 }

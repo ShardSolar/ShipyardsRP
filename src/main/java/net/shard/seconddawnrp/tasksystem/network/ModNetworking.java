@@ -6,7 +6,6 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.shard.seconddawnrp.SecondDawnRP;
 import net.shard.seconddawnrp.division.Division;
-import net.shard.seconddawnrp.gmevent.network.*;
 import net.shard.seconddawnrp.playerdata.PlayerProfile;
 import net.shard.seconddawnrp.tasksystem.data.OpsTaskStatus;
 import net.shard.seconddawnrp.tasksystem.data.TaskAssignmentSource;
@@ -88,24 +87,6 @@ public class ModNetworking {
                 (payload, context) -> context.player().server.execute(() ->
                         handleAcceptTerminalTask(context.player(), payload))
         );
-
-        PayloadTypeRegistry.playC2S().register(SaveTemplateC2SPacket.ID, SaveTemplateC2SPacket.CODEC);
-        PayloadTypeRegistry.playC2S().register(ActivateSpawnBlockC2SPacket.ID, ActivateSpawnBlockC2SPacket.CODEC);
-        PayloadTypeRegistry.playC2S().register(PushToPoolC2SPacket.ID, PushToPoolC2SPacket.CODEC);
-        PayloadTypeRegistry.playC2S().register(FireSpawnC2SPacket.ID, FireSpawnC2SPacket.CODEC);
-        PayloadTypeRegistry.playC2S().register(DespawnAllC2SPacket.ID, DespawnAllC2SPacket.CODEC);
-        PayloadTypeRegistry.playS2C().register(GmToolRefreshS2CPacket.ID, GmToolRefreshS2CPacket.CODEC);
-
-        ServerPlayNetworking.registerGlobalReceiver(SaveTemplateC2SPacket.ID,
-                (payload, context) -> context.player().server.execute(() -> handleSaveTemplate(context.player(), payload)));
-        ServerPlayNetworking.registerGlobalReceiver(ActivateSpawnBlockC2SPacket.ID,
-                (payload, context) -> context.player().server.execute(() -> handleActivateSpawnBlock(context.player(), payload)));
-        ServerPlayNetworking.registerGlobalReceiver(PushToPoolC2SPacket.ID,
-                (payload, context) -> context.player().server.execute(() -> handlePushToPool(context.player(), payload)));
-        ServerPlayNetworking.registerGlobalReceiver(FireSpawnC2SPacket.ID,
-                (payload, context) -> context.player().server.execute(() -> handleFireSpawn(context.player(), payload)));
-        ServerPlayNetworking.registerGlobalReceiver(DespawnAllC2SPacket.ID,
-                (payload, context) -> context.player().server.execute(() -> handleDespawnAll(context.player(), payload)));
     }
 
     private static void handleCreateTask(ServerPlayerEntity player, CreateTaskC2SPacket packet) {
@@ -120,7 +101,6 @@ public class ModNetworking {
             return;
         }
 
-        // Auto-generate task ID from display name — ignores packet.taskId() entirely
         String autoId = packet.displayName()
                 .trim()
                 .toLowerCase()
@@ -269,7 +249,6 @@ public class ModNetworking {
                 }
             }
 
-
             case "RETURN" -> {
                 if (!SecondDawnRP.TASK_PERMISSION_SERVICE.canReturnTasks(player, actorProfile)) {
                     player.sendMessage(Text.literal("You do not have permission to return tasks."), false);
@@ -312,7 +291,6 @@ public class ModNetworking {
         } else {
             player.sendMessage(Text.literal("Task action failed."), false);
         }
-
     }
 
     private static void handleSubmitManualConfirm(ServerPlayerEntity player, SubmitManualConfirmC2SPacket packet) {
@@ -423,7 +401,6 @@ public class ModNetworking {
 
         String taskId = packet.taskId();
 
-        // Validate still available
         var poolEntry = SecondDawnRP.TASK_SERVICE.getPoolEntries().stream()
                 .filter(e -> e.getTaskId().equals(taskId))
                 .findFirst().orElse(null);
@@ -455,117 +432,4 @@ public class ModNetworking {
         String name = template != null ? template.getDisplayName() : taskId;
         player.sendMessage(Text.literal("[Terminal] Task accepted: " + name), false);
     }
-
-    private static void handleSaveTemplate(ServerPlayerEntity player, SaveTemplateC2SPacket packet) {
-        PlayerProfile profile = getActorProfile(player);
-        if (profile == null || !SecondDawnRP.GM_PERMISSION_SERVICE.canManageTemplates(player, profile)) {
-            player.sendMessage(Text.literal("[GM] No permission."), false); return;
-        }
-        var template = new net.shard.seconddawnrp.gmevent.data.EncounterTemplate(
-                packet.id(), packet.displayName(), packet.mobTypeId(),
-                packet.maxHealth(), packet.armor(), packet.totalSpawnCount(),
-                packet.maxActiveAtOnce(), packet.spawnRadiusBlocks(), packet.spawnIntervalTicks(),
-                packet.getBehaviour(), packet.statusEffects(), List.of(), List.of()
-        );
-        SecondDawnRP.GM_EVENT_SERVICE.saveTemplate(template);
-        player.sendMessage(Text.literal("[GM] Template saved: " + packet.displayName()), false);
-        sendGmToolRefresh(player);
-    }
-
-    private static void handleActivateSpawnBlock(ServerPlayerEntity player,
-                                                 ActivateSpawnBlockC2SPacket packet) {
-        PlayerProfile profile = getActorProfile(player);
-        if (profile == null || !SecondDawnRP.GM_PERMISSION_SERVICE
-                .canTriggerEvents(player, profile)) {
-            player.sendMessage(Text.literal("[GM] No permission."), false);
-            return;
-        }
-
-        var world = player.getServerWorld();
-        var pos = new net.minecraft.util.math.BlockPos(packet.x(), packet.y(), packet.z());
-
-        // Use the template ID from the GUI if provided
-        String templateId = packet.templateId();
-        if (templateId != null && !templateId.isBlank()) {
-            // Update the spawn block registration to use the GUI-selected template
-            SecondDawnRP.GM_EVENT_SERVICE.registerSpawnBlock(
-                    world, pos, templateId,
-                    packet.linkedTaskId());
-        }
-
-        var entry = SecondDawnRP.GM_EVENT_SERVICE.findSpawnBlock(world, pos).orElse(null);
-        if (entry == null) {
-            player.sendMessage(Text.literal(
-                    "[GM] No spawn block registered at that position."), false);
-            return;
-        }
-
-        if (packet.linkedTaskId() != null && !packet.linkedTaskId().isBlank()) {
-            entry.setLinkedTaskId(packet.linkedTaskId());
-        }
-
-        boolean ok = SecondDawnRP.GM_EVENT_SERVICE.triggerSpawnBlock(world, pos);
-        player.sendMessage(Text.literal(
-                ok ? "[GM] Event triggered: " + entry.getTemplateId()
-                        + " at " + pos.toShortString()
-                        : "[GM] Trigger failed — check template is valid."), false);
-    }
-
-    private static void handlePushToPool(ServerPlayerEntity player, PushToPoolC2SPacket packet) {
-        PlayerProfile profile = getActorProfile(player);
-        if (profile == null || !SecondDawnRP.TASK_PERMISSION_SERVICE.canCreateTasks(player, profile)) {
-            player.sendMessage(Text.literal("[GM] No permission."), false); return;
-        }
-        try {
-            var division = net.shard.seconddawnrp.division.Division.valueOf(packet.divisionName());
-            var entry = SecondDawnRP.TASK_SERVICE.createPoolTask(
-                    "gm_" + packet.templateId() + "_" + System.currentTimeMillis() % 10000,
-                    packet.taskDisplayName(), packet.taskDescription(),
-                    division,
-                    net.shard.seconddawnrp.tasksystem.data.TaskObjectiveType.MANUAL_CONFIRM,
-                    "GM Event: " + packet.templateId(), 1, 50, true, player.getUuid()
-            );
-            player.sendMessage(Text.literal(entry != null
-                    ? "[GM] Task pushed to pool: " + entry.getTaskId()
-                    : "[GM] Push failed."), false);
-            if (entry != null) sendOpsPadRefresh(player);
-        } catch (Exception e) {
-            player.sendMessage(Text.literal("[GM] Push failed: " + e.getMessage()), false);
-        }
-    }
-
-    private static void handleFireSpawn(ServerPlayerEntity player, FireSpawnC2SPacket packet) {
-        PlayerProfile profile = getActorProfile(player);
-        if (profile == null || !SecondDawnRP.GM_PERMISSION_SERVICE.canTriggerEvents(player, profile)) {
-            player.sendMessage(Text.literal("[GM] No permission."), false); return;
-        }
-        var world = player.getServerWorld();
-        var pos = new net.minecraft.util.math.BlockPos(packet.x(), packet.y(), packet.z());
-        var event = SecondDawnRP.GM_EVENT_SERVICE.triggerEvent(world, pos, packet.templateId(), null);
-        player.sendMessage(Text.literal(event.isPresent()
-                ? "[GM] Event fired: " + event.get().getEventId()
-                : "[GM] Unknown template: " + packet.templateId()), false);
-    }
-
-    private static void handleDespawnAll(ServerPlayerEntity player, DespawnAllC2SPacket packet) {
-        PlayerProfile profile = getActorProfile(player);
-        if (profile == null || !SecondDawnRP.GM_PERMISSION_SERVICE.canStopEvents(player, profile)) {
-            player.sendMessage(Text.literal("[GM] No permission."), false); return;
-        }
-        SecondDawnRP.GM_EVENT_SERVICE.stopAllEvents();
-        player.sendMessage(Text.literal("[GM] All events despawned."), false);
-    }
-
-    private static void sendGmToolRefresh(ServerPlayerEntity player) {
-        var entries = SecondDawnRP.GM_EVENT_SERVICE.getTemplates().stream()
-                .map(t -> new GmToolRefreshS2CPacket.TemplateEntry(
-                        t.getId(), t.getDisplayName(), t.getMobTypeId(),
-                        t.getMaxHealth(), t.getArmor(), t.getTotalSpawnCount(),
-                        t.getMaxActiveAtOnce(), t.getSpawnRadiusBlocks(),
-                        t.getSpawnIntervalTicks(), t.getSpawnBehaviour().name(),
-                        t.getStatusEffects()))
-                .toList();
-        ServerPlayNetworking.send(player, new GmToolRefreshS2CPacket(entries));
-    }
-
 }

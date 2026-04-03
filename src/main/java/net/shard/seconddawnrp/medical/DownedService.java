@@ -5,8 +5,10 @@ import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.registry.Registries;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
+import net.minecraft.util.math.BlockPos;
 import net.shard.seconddawnrp.character.LongTermInjury;
 import net.shard.seconddawnrp.character.LongTermInjuryTier;
 import net.shard.seconddawnrp.division.Division;
@@ -37,22 +39,22 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class DownedService {
 
-    private static final int  IMMOBILIZE_INTERVAL_TICKS   = 10;
-    private static final int  IMMOBILIZE_DURATION_TICKS   = 30;
+    private static final int  IMMOBILIZE_INTERVAL_TICKS     = 10;
+    private static final int  IMMOBILIZE_DURATION_TICKS     = 30;
     private static final long FORCE_RESPAWN_PROMPT_DELAY_MS = 2 * 60 * 1000L;
     private static final long FORCE_RESPAWN_HOLD_MS         = 3000L;
 
-    private static final LongTermInjuryTier FORCE_RESPAWN_TIER      = LongTermInjuryTier.MODERATE;
-    private static final int  FORCE_RESPAWN_SESSIONS_REQUIRED        = 2;
+    private static final LongTermInjuryTier FORCE_RESPAWN_TIER = LongTermInjuryTier.MODERATE;
+    private static final int FORCE_RESPAWN_SESSIONS_REQUIRED   = 2;
 
     /** Players online threshold below which low pop mode activates. */
-    private static final int  LOW_POP_PLAYER_THRESHOLD               = 5;
+    private static final int LOW_POP_PLAYER_THRESHOLD = 5;
 
     /** STI duration in low pop mode — 30 minutes in ms. */
-    private static final long LOW_POP_STI_DURATION_MS                = 30 * 60 * 1000L;
+    private static final long LOW_POP_STI_DURATION_MS = 30 * 60 * 1000L;
 
     /** Sessions to clear STI in low pop (1 = one Medical treatment clears it early). */
-    private static final int  LOW_POP_STI_SESSIONS_REQUIRED          = 1;
+    private static final int LOW_POP_STI_SESSIONS_REQUIRED = 1;
 
     public static final String DEFAULT_DOWNED_CONDITION = "critical_trauma";
 
@@ -66,7 +68,9 @@ public class DownedService {
         this.profileManager = profileManager;
     }
 
-    public void setServer(MinecraftServer server) { this.server = server; }
+    public void setServer(MinecraftServer server) {
+        this.server = server;
+    }
 
     // ── Low pop detection ─────────────────────────────────────────────────────
 
@@ -86,7 +90,7 @@ public class DownedService {
                 return false;
             }
         }
-        return true; // No Medical online
+        return true;
     }
 
     // ── Down ─────────────────────────────────────────────────────────────────
@@ -110,7 +114,6 @@ public class DownedService {
                         "[Medical] You are down. Stay still — Medical is on their way.")
                 .formatted(Formatting.DARK_RED), false);
 
-        // Notify online Medical officers
         if (server != null) {
             for (ServerPlayerEntity online : server.getPlayerManager().getPlayerList()) {
                 PlayerProfile p = profileManager.getLoadedProfile(online.getUuid());
@@ -123,7 +126,6 @@ public class DownedService {
             }
         }
 
-        // Register as medical terminal visitor
         if (net.shard.seconddawnrp.SecondDawnRP.MEDICAL_TERMINAL_SERVICE != null) {
             net.shard.seconddawnrp.SecondDawnRP.MEDICAL_TERMINAL_SERVICE.registerVisit(player);
         }
@@ -172,6 +174,81 @@ public class DownedService {
                 .formatted(Formatting.GREEN), false);
     }
 
+    // ── Downed fatal resolution ──────────────────────────────────────────────
+
+    /**
+     * Called when a player takes another lethal hit while already downed.
+     *
+     * We do NOT allow vanilla death to proceed. Instead, we resolve the state
+     * safely, detach from gurney if needed, apply the same post-respawn injury
+     * logic, and place the player at world spawn with low health.
+     */
+    public void resolveDownedDeath(ServerPlayerEntity player) {
+        UUID uuid = player.getUuid();
+        PlayerProfile profile = profileManager.getLoadedProfile(uuid);
+        if (profile == null || !profile.isDowned()) return;
+
+        // Detach from gurney first so nothing remains mounted / orphaned
+        if (net.shard.seconddawnrp.SecondDawnRP.GURNEY_SERVICE != null) {
+            if (net.shard.seconddawnrp.SecondDawnRP.GURNEY_SERVICE.isPatientOnGurney(uuid)) {
+                net.shard.seconddawnrp.SecondDawnRP.GURNEY_SERVICE.detachByPatient(player);
+            }
+            if (net.shard.seconddawnrp.SecondDawnRP.GURNEY_SERVICE.isCarrier(uuid)) {
+                net.shard.seconddawnrp.SecondDawnRP.GURNEY_SERVICE.detachByCarrier(player);
+            }
+        }
+
+        boolean lowPop = isLowPop();
+
+        // Clear downed state
+        profile.setDowned(false);
+        profile.setDownedAt(0L);
+        profile.setDownedEventMode(false);
+        profileManager.markDirty(uuid);
+        sneakStartMs.remove(uuid);
+
+        // Remove immobilization
+        player.removeStatusEffect(
+                Registries.STATUS_EFFECT.getEntry(StatusEffects.SLOWNESS.value()));
+        player.removeStatusEffect(
+                Registries.STATUS_EFFECT.getEntry(StatusEffects.MINING_FATIGUE.value()));
+
+        // Resolve active medical conditions cleanly
+        if (net.shard.seconddawnrp.SecondDawnRP.MEDICAL_SERVICE != null) {
+            List<String> conditionIds = new ArrayList<>(profile.getActiveMedicalConditionIds());
+            for (String condId : conditionIds) {
+                net.shard.seconddawnrp.SecondDawnRP.MEDICAL_SERVICE.forceResolve(condId, "server");
+            }
+        }
+
+        // Apply injury penalty just like force respawn
+        applyPostRespawnInjury(uuid, lowPop);
+
+        // Safe reposition to world spawn
+        ServerWorld world = player.getServerWorld();
+        BlockPos spawn = world.getSpawnPos();
+        player.teleport(
+                world,
+                spawn.getX() + 0.5,
+                spawn.getY() + 1.0,
+                spawn.getZ() + 0.5,
+                player.getYaw(),
+                player.getPitch()
+        );
+
+        player.setHealth(Math.min(player.getMaxHealth(), 6.0f));
+
+        if (lowPop) {
+            player.sendMessage(Text.literal(
+                            "[Medical] You succumbed while downed. Emergency recovery applied — short-term injury assigned.")
+                    .formatted(Formatting.YELLOW), false);
+        } else {
+            player.sendMessage(Text.literal(
+                            "[Medical] You succumbed while downed. Emergency recovery applied — long-term injury assigned.")
+                    .formatted(Formatting.RED), false);
+        }
+    }
+
     // ── Force respawn ─────────────────────────────────────────────────────────
 
     private void forceRespawn(ServerPlayerEntity player) {
@@ -181,7 +258,6 @@ public class DownedService {
 
         boolean lowPop = isLowPop();
 
-        // Clear downed state
         profile.setDowned(false);
         profile.setDownedAt(0L);
         profile.setDownedEventMode(false);
@@ -193,7 +269,6 @@ public class DownedService {
         player.removeStatusEffect(
                 Registries.STATUS_EFFECT.getEntry(StatusEffects.MINING_FATIGUE.value()));
 
-        // Force-clear all active medical conditions (copy list to avoid CME)
         if (net.shard.seconddawnrp.SecondDawnRP.MEDICAL_SERVICE != null) {
             List<String> conditionIds = new ArrayList<>(profile.getActiveMedicalConditionIds());
             for (String condId : conditionIds) {
@@ -202,7 +277,6 @@ public class DownedService {
             }
         }
 
-        // Apply injury — STI in low pop, LTI in normal pop
         applyPostRespawnInjury(uuid, lowPop);
 
         player.setHealth(Math.min(player.getMaxHealth(), 6.0f));
@@ -237,16 +311,15 @@ public class DownedService {
 
         LongTermInjury injury;
         if (lowPop) {
-            // STI — override both duration and sessions
             long now = System.currentTimeMillis();
             injury = new LongTermInjury(
                     java.util.UUID.randomUUID().toString(),
                     uuid,
                     FORCE_RESPAWN_TIER,
                     now,
-                    now + LOW_POP_STI_DURATION_MS, // 30 minutes
+                    now + LOW_POP_STI_DURATION_MS,
                     0, 0L, true,
-                    LOW_POP_STI_SESSIONS_REQUIRED, // 1 session
+                    LOW_POP_STI_SESSIONS_REQUIRED,
                     null,
                     "Short-Term Injury (Low Pop)",
                     "Temporary injury sustained during low population period. Auto-clears in 30 minutes.",
@@ -254,7 +327,6 @@ public class DownedService {
                     0L, 0L
             );
         } else {
-            // Normal LTI — MODERATE, 2 sessions, 3 days
             injury = LongTermInjury.createWithSessionOverride(
                     uuid, FORCE_RESPAWN_TIER, FORCE_RESPAWN_SESSIONS_REQUIRED);
         }
@@ -280,7 +352,7 @@ public class DownedService {
             }
 
             long downedAt = profile.getDownedAt();
-            long now      = System.currentTimeMillis();
+            long now = System.currentTimeMillis();
             long downedMs = now - downedAt;
 
             if (downedMs < FORCE_RESPAWN_PROMPT_DELAY_MS) {
@@ -289,7 +361,8 @@ public class DownedService {
                     long remaining = (FORCE_RESPAWN_PROMPT_DELAY_MS - downedMs) / 1000;
                     player.sendMessage(
                             Text.literal("§c[DOWN] Force respawn available in " + remaining + "s"),
-                            true);
+                            true
+                    );
                 }
                 continue;
             }
@@ -299,19 +372,20 @@ public class DownedService {
 
             if (isSneaking) {
                 long sneakStart = sneakStartMs.computeIfAbsent(uuid, k -> now);
-                long heldMs     = now - sneakStart;
-                long remaining  = FORCE_RESPAWN_HOLD_MS - heldMs;
+                long heldMs = now - sneakStart;
+                long remaining = FORCE_RESPAWN_HOLD_MS - heldMs;
 
                 if (remaining <= 0) {
                     sneakStartMs.remove(uuid);
                     forceRespawn(player);
                 } else {
                     long remainSec = (remaining / 1000) + 1;
-                    String popTag  = isLowPop() ? " §8(STI — 30min)" : " §8(LTI penalty)";
+                    String popTag = isLowPop() ? " §8(STI — 30min)" : " §8(LTI penalty)";
                     player.sendMessage(
                             Text.literal("§c[DOWN] Force respawn in " + remainSec
                                     + "s — release sneak to cancel" + popTag),
-                            true);
+                            true
+                    );
                 }
             } else {
                 sneakStartMs.remove(uuid);
@@ -320,9 +394,9 @@ public class DownedService {
                             ? " §8[Low Pop — STI only]"
                             : " §8[LTI penalty applies]";
                     player.sendMessage(
-                            Text.literal("§c[DOWN] §7Hold §cSneak §73s to force respawn"
-                                    + popTag),
-                            true);
+                            Text.literal("§c[DOWN] §7Hold §cSneak §73s to force respawn" + popTag),
+                            true
+                    );
                 }
             }
         }
@@ -340,9 +414,11 @@ public class DownedService {
     private void applyImmobilization(ServerPlayerEntity player) {
         player.addStatusEffect(new StatusEffectInstance(
                 Registries.STATUS_EFFECT.getEntry(StatusEffects.SLOWNESS.value()),
-                IMMOBILIZE_DURATION_TICKS, 254, false, false, false));
+                IMMOBILIZE_DURATION_TICKS, 254, false, false, false
+        ));
         player.addStatusEffect(new StatusEffectInstance(
                 Registries.STATUS_EFFECT.getEntry(StatusEffects.MINING_FATIGUE.value()),
-                IMMOBILIZE_DURATION_TICKS, 254, false, false, false));
+                IMMOBILIZE_DURATION_TICKS, 254, false, false, false
+        ));
     }
 }

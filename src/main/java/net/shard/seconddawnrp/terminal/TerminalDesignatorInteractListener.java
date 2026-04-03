@@ -4,6 +4,7 @@ import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.ActionResult;
+import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
 import net.shard.seconddawnrp.SecondDawnRP;
 
@@ -19,12 +20,12 @@ public class TerminalDesignatorInteractListener {
             if (!(world instanceof ServerWorld sw)) return ActionResult.PASS;
 
             if (player.isSneaking()) return ActionResult.PASS;
-            if (hand != net.minecraft.util.Hand.MAIN_HAND) return ActionResult.PASS;
+            if (hand != Hand.MAIN_HAND) return ActionResult.PASS;
 
             BlockPos pos = hitResult.getBlockPos();
             boolean consumed = SecondDawnRP.TERMINAL_DESIGNATOR_SERVICE.handleInteract(sp, sw, pos);
 
-            return consumed ? ActionResult.FAIL : ActionResult.PASS;
+            return consumed ? ActionResult.SUCCESS : ActionResult.PASS;
         });
     }
 }

@@ -36,7 +36,7 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
     private static final int LIST_Y = 30;
     private static final int LIST_W = 140;
     private static final int LIST_H = 170;
-    private static final int ROW_H  = 18;
+    private static final int ROW_H  = 28;
     private static final int VISIBLE_ROWS = LIST_H / ROW_H;
 
     // Right — detail panel
@@ -46,26 +46,29 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
     private static final int DETAIL_H = 100;
 
     // Action button area — below detail panel
-    private static final int BTN_X      = 160;
+    private static final int BTN_X       = 160;
     private static final int BTN_START_Y = 138;
-    private static final int BTN_W      = 110;
-    private static final int BTN_H      = 13;
-    private static final int BTN_GAP    = 15;
-    private static final int BTN_COL2_X = 278;  // second column of buttons
+    private static final int BTN_W       = 110;
+    private static final int BTN_H       = 13;
+    private static final int BTN_GAP     = 15;
+    private static final int BTN_COL2_X  = 278;
 
     // Feedback bar
     private static final int FEEDBACK_Y = 208;
 
+    private static final int COMMEND_MAX_ABS_POINTS = 100;
+    private static final int COMMEND_STEP = 5;
+
     // ── State ─────────────────────────────────────────────────────────────────
 
-    private int  listScroll = 0;
-    private int  detailScroll = 0;
+    private int listScroll = 0;
+    private int detailScroll = 0;
 
     // Inline input state for graduate rank and commend
     private boolean awaitingGraduateInput = false;
     private boolean awaitingCommendInput  = false;
-    private String  inputBuffer = "";
-    private int     commendPoints = 25;  // default commend points
+    private String inputBuffer = "";
+    private int commendPoints = 25; // fallback/manual adjustment value
 
     // Colours
     private static final int COL_HEADER   = 0xFF8FD7E8;
@@ -76,7 +79,6 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
     private static final int COL_RED      = 0xFFFF6060;
     private static final int COL_ONLINE   = 0xFF44FF88;
     private static final int COL_OFFLINE  = 0xFF666666;
-    private static final int COL_CADET    = 0xFF88AAFF;
 
     public RosterScreen(RosterScreenHandler handler, PlayerInventory inventory, Text title) {
         super(handler, inventory, title);
@@ -164,21 +166,26 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
             int dotColor = e.isOnline() ? COL_ONLINE : COL_OFFLINE;
             context.fill(rowX + 2, rowY + 5, rowX + 5, rowY + 8, dotColor);
 
-            // Name
-            String name = trim(e.characterName(), 14);
-            context.drawText(this.textRenderer, name,
+            // Character name (top line)
+            String characterName = trim(e.characterName(), 14);
+            context.drawText(this.textRenderer, characterName,
                     rowX + 8, rowY + 2, e.isOnline() ? COL_TEXT : COL_DIM, false);
+
+            // Username (second line)
+            String username = "@" + trim(e.minecraftName(), 12);
+            context.drawText(this.textRenderer, username,
+                    rowX + 8, rowY + 11, 0xFF7FA0B8, false);
 
             // Rank badge
             String rankShort = rankAbbrev(e.rankId());
             int rankColor = rankColor(e.rankId());
             context.drawText(this.textRenderer, rankShort,
-                    rowX + 8, rowY + 10, rankColor, false);
+                    rowX + 8, rowY + 20, rankColor, false);
 
             // Division badge (small, right-aligned)
             String divShort = e.divisionName().substring(0, Math.min(3, e.divisionName().length()));
             context.drawText(this.textRenderer, divShort,
-                    rowX + LIST_W - 26, rowY + 5, COL_DIM, false);
+                    rowX + LIST_W - 26, rowY + 11, COL_DIM, false);
         }
 
         context.disableScissor();
@@ -196,7 +203,7 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
             return;
         }
 
-        List<String[]> lines = buildDetailLines(e); // [label, value, colorHex]
+        List<String[]> lines = buildDetailLines(e);
         int visibleLines = DETAIL_H / 11;
         clampDetailScroll(lines.size(), visibleLines);
 
@@ -208,7 +215,7 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
             int di = i + detailScroll;
             if (di >= lines.size()) break;
             String[] line = lines.get(di);
-            // label in dim, value in specified color
+
             int labelW = textRenderer.getWidth(line[0]);
             context.drawText(this.textRenderer, line[0],
                     ox + DETAIL_X + 4, textY, COL_DIM, false);
@@ -259,15 +266,9 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
         RosterEntry selected = handler.getSelected();
         if (selected == null) return;
 
-        // Determine if selected is the viewer themselves — some actions blocked
-        // (can't promote yourself — would need viewer UUID on the handler, skip for now)
-
         boolean isCadet = isCadetRank(selected.rankId());
-        boolean hasPendingGrad = false; // populated via future graduation state packet
-
         int y = oy + BTN_START_Y;
 
-        // Column 1 — rank management
         if (handler.canManageRanks()) {
             if (!isCadet) {
                 drawButton(context, ox + BTN_X, y, BTN_W, BTN_H,
@@ -277,10 +278,9 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
             }
         }
 
-        // Column 1 continued — cadet actions
         if (handler.isAdmin() || handler.canManageRanks()) {
-            int cadetY = y + (handler.canManageRanks() && !isCadet ? BTN_GAP * 2 : 0);
             if (!isCadet) {
+                int cadetY = y + (handler.canManageRanks() && !isCadet ? BTN_GAP * 2 : 0);
                 drawButton(context, ox + BTN_X, cadetY + BTN_GAP, BTN_W, BTN_H,
                         "ENROL CADET", mouseX, mouseY, 0x1A4488FF);
             } else {
@@ -293,7 +293,6 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
             }
         }
 
-        // Column 2 — member management
         if (handler.canManageMembers()) {
             drawButton(context, ox + BTN_COL2_X, y, BTN_W, BTN_H,
                     "TRANSFER DIV", mouseX, mouseY, 0x1AFFAA22);
@@ -301,10 +300,9 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
                     "DISMISS", mouseX, mouseY, 0x1AFF2222);
         }
 
-        // Column 2 continued — commend
         if (handler.canCommend()) {
             drawButton(context, ox + BTN_COL2_X, y + BTN_GAP * 2, BTN_W, BTN_H,
-                    "COMMEND", mouseX, mouseY, 0x1AFFDD00);
+                    "COMMEND / DEMERIT", mouseX, mouseY, 0x1AFFDD00);
         }
     }
 
@@ -324,7 +322,6 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
     private void drawInputOverlay(DrawContext context, int ox, int oy) {
         if (!awaitingGraduateInput && !awaitingCommendInput) return;
 
-        // Semi-transparent overlay over the button area
         context.fill(ox + BTN_X - 4, oy + BTN_START_Y - 4,
                 ox + BTN_COL2_X + BTN_W + 4, oy + BTN_START_Y + BTN_GAP * 4,
                 0xCC101820);
@@ -339,13 +336,25 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
             context.drawText(this.textRenderer, "Enter to confirm  Esc to cancel",
                     ox + BTN_X, oy + BTN_START_Y + 24, COL_DIM, false);
         } else {
-            context.drawText(this.textRenderer, "Commend reason (pts: " + commendPoints + "):",
-                    ox + BTN_X, oy + BTN_START_Y, COL_HEADER, false);
+            ParsedCommendInput parsed = parseCommendInput(inputBuffer, commendPoints);
+
+            String mode = parsed.points() >= 0 ? "COMMEND" : "DEMERIT";
+            int modeColor = parsed.points() >= 0 ? COL_GOLD : COL_RED;
+
+            context.drawText(this.textRenderer, mode + " reason (pts: " + parsed.points() + "):",
+                    ox + BTN_X, oy + BTN_START_Y, modeColor, false);
+
             context.drawText(this.textRenderer, "> " + inputBuffer + "_",
-                    ox + BTN_X, oy + BTN_START_Y + 12, COL_GOLD, false);
-            context.drawText(this.textRenderer,
-                    "[ - / + ] pts   Enter to confirm   Esc to cancel",
+                    ox + BTN_X, oy + BTN_START_Y + 12, modeColor, false);
+
+            String preview = "Parsed: " + parsed.points() + " pts"
+                    + (parsed.reason().isBlank() ? "" : " | Reason: " + parsed.reason());
+            context.drawText(this.textRenderer, preview,
                     ox + BTN_X, oy + BTN_START_Y + 24, COL_DIM, false);
+
+            context.drawText(this.textRenderer,
+                    "Type +15 or -15 at the start. [ - / + ] still adjusts fallback points.",
+                    ox + BTN_X, oy + BTN_START_Y + 36, COL_DIM, false);
         }
     }
 
@@ -367,12 +376,10 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         int ox = this.x, oy = this.y;
 
-        // If input overlay is active, don't process button clicks
         if (awaitingGraduateInput || awaitingCommendInput) {
             return super.mouseClicked(mouseX, mouseY, button);
         }
 
-        // Member list click
         List<RosterEntry> members = handler.getMembers();
         for (int i = 0; i < VISIBLE_ROWS; i++) {
             int di = i + listScroll;
@@ -386,7 +393,6 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
             }
         }
 
-        // Action buttons
         RosterEntry selected = handler.getSelected();
         if (selected != null) {
             handleButtonClicks(mouseX, mouseY, ox, oy, selected);
@@ -420,7 +426,6 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
                     sendAction("CADET_PROMOTE", selected, "", 0); return;
                 }
                 if (inside(mouseX, mouseY, ox + BTN_X, y + BTN_GAP, BTN_W, BTN_H)) {
-                    // Propose graduation — need rank input
                     awaitingGraduateInput = true;
                     inputBuffer = "ensign";
                     return;
@@ -433,7 +438,6 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
 
         if (handler.canManageMembers()) {
             if (inside(mouseX, mouseY, ox + BTN_COL2_X, y, BTN_W, BTN_H)) {
-                // Transfer — for now send to UNASSIGNED as placeholder; full div picker in Phase 9.5
                 sendAction("TRANSFER", selected, "UNASSIGNED", 0); return;
             }
             if (inside(mouseX, mouseY, ox + BTN_COL2_X, y + BTN_GAP, BTN_W, BTN_H)) {
@@ -446,7 +450,6 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
                 awaitingCommendInput = true;
                 inputBuffer = "";
                 commendPoints = 25;
-                return;
             }
         }
     }
@@ -485,13 +488,14 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
                 inputBuffer = "";
                 return true;
             }
-            if (keyCode == 257 || keyCode == 335) { // Enter / numpad Enter
+            if (keyCode == 257 || keyCode == 335) { // Enter
                 RosterEntry selected = handler.getSelected();
                 if (selected != null) {
                     if (awaitingGraduateInput) {
                         sendAction("CADET_GRADUATE", selected, inputBuffer.trim(), 0);
                     } else {
-                        sendAction("COMMEND", selected, inputBuffer.trim(), commendPoints);
+                        ParsedCommendInput parsed = parseCommendInput(inputBuffer, commendPoints);
+                        sendAction("COMMEND", selected, parsed.reason(), parsed.points());
                     }
                 }
                 awaitingGraduateInput = false;
@@ -503,18 +507,19 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
                 inputBuffer = inputBuffer.substring(0, inputBuffer.length() - 1);
                 return true;
             }
-            // Commend point adjustment
+
             if (awaitingCommendInput) {
                 if (keyCode == 93 || keyCode == 334) { // + / numpad +
-                    commendPoints = Math.min(commendPoints + 5, 100);
+                    commendPoints = adjustCommendPoints(commendPoints + COMMEND_STEP);
                     return true;
                 }
                 if (keyCode == 45 || keyCode == 333) { // - / numpad -
-                    commendPoints = Math.max(commendPoints - 5, 1);
+                    commendPoints = adjustCommendPoints(commendPoints - COMMEND_STEP);
                     return true;
                 }
             }
-            return true; // consume all keys when overlay active
+
+            return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
@@ -522,7 +527,7 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
     @Override
     public boolean charTyped(char chr, int modifiers) {
         if (awaitingGraduateInput || awaitingCommendInput) {
-            if (chr >= 32 && inputBuffer.length() < 64) {
+            if (chr >= 32 && inputBuffer.length() < 96) {
                 inputBuffer += chr;
             }
             return true;
@@ -536,6 +541,55 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
         ClientPlayNetworking.send(new RosterActionC2SPacket(
                 action, target.playerUuidStr(), stringArg, intArg));
     }
+
+    // ── Commend / demerit parsing ─────────────────────────────────────────────
+
+    private ParsedCommendInput parseCommendInput(String rawInput, int fallbackPoints) {
+        String trimmed = rawInput == null ? "" : rawInput.trim();
+        if (trimmed.isBlank()) {
+            int normalized = normalizeNonZeroPoints(fallbackPoints);
+            return new ParsedCommendInput(normalized, "");
+        }
+
+        int spaceIndex = trimmed.indexOf(' ');
+        String firstToken = spaceIndex >= 0 ? trimmed.substring(0, spaceIndex) : trimmed;
+
+        if (firstToken.matches("[+-]\\d+")) {
+            try {
+                int parsed = Integer.parseInt(firstToken);
+                int clamped = clampParsedPoints(parsed);
+                String reason = spaceIndex >= 0 ? trimmed.substring(spaceIndex + 1).trim() : "";
+                return new ParsedCommendInput(clamped, reason);
+            } catch (NumberFormatException ignored) {
+                // Fall through to fallback behavior
+            }
+        }
+
+        int normalized = normalizeNonZeroPoints(fallbackPoints);
+        return new ParsedCommendInput(normalized, trimmed);
+    }
+
+    private int clampParsedPoints(int points) {
+        if (points > COMMEND_MAX_ABS_POINTS) return COMMEND_MAX_ABS_POINTS;
+        if (points < -COMMEND_MAX_ABS_POINTS) return -COMMEND_MAX_ABS_POINTS;
+        if (points == 0) return COMMEND_STEP;
+        return points;
+    }
+
+    private int normalizeNonZeroPoints(int points) {
+        int clamped = Math.max(-COMMEND_MAX_ABS_POINTS, Math.min(COMMEND_MAX_ABS_POINTS, points));
+        if (clamped == 0) return COMMEND_STEP;
+        return clamped;
+    }
+
+    private int adjustCommendPoints(int candidate) {
+        if (candidate > COMMEND_MAX_ABS_POINTS) return COMMEND_MAX_ABS_POINTS;
+        if (candidate < -COMMEND_MAX_ABS_POINTS) return -COMMEND_MAX_ABS_POINTS;
+        if (candidate == 0) return -COMMEND_STEP;
+        return candidate;
+    }
+
+    private record ParsedCommendInput(int points, String reason) {}
 
     // ── Drawing helpers ───────────────────────────────────────────────────────
 
@@ -562,23 +616,23 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
 
     private String rankAbbrev(String rankId) {
         return switch (rankId) {
-            case "JUNIOR_CREWMAN"      -> "JCR";
-            case "CREWMAN"             -> "CR";
-            case "SENIOR_CREWMAN"      -> "SCR";
-            case "PETTY_OFFICER"       -> "PO";
-            case "SENIOR_PETTY_OFFICER"-> "SPO";
-            case "CHIEF_PETTY_OFFICER" -> "CPO";
-            case "CADET_1"             -> "C1";
-            case "CADET_2"             -> "C2";
-            case "CADET_3"             -> "C3";
-            case "CADET_4"             -> "C4";
-            case "ENSIGN"              -> "ENS";
-            case "LIEUTENANT_JG"       -> "LTJG";
-            case "LIEUTENANT"          -> "LT";
-            case "LIEUTENANT_COMMANDER"-> "LCDR";
-            case "COMMANDER"           -> "CDR";
-            case "CAPTAIN"             -> "CAPT";
-            default                    -> "??";
+            case "JUNIOR_CREWMAN"       -> "JCR";
+            case "CREWMAN"              -> "CR";
+            case "SENIOR_CREWMAN"       -> "SCR";
+            case "PETTY_OFFICER"        -> "PO";
+            case "SENIOR_PETTY_OFFICER" -> "SPO";
+            case "CHIEF_PETTY_OFFICER"  -> "CPO";
+            case "CADET_1"              -> "C1";
+            case "CADET_2"              -> "C2";
+            case "CADET_3"              -> "C3";
+            case "CADET_4"              -> "C4";
+            case "ENSIGN"               -> "ENS";
+            case "LIEUTENANT_JG"        -> "LTJG";
+            case "LIEUTENANT"           -> "LT";
+            case "LIEUTENANT_COMMANDER" -> "LCDR";
+            case "COMMANDER"            -> "CDR";
+            case "CAPTAIN"              -> "CAPT";
+            default                     -> "??";
         };
     }
 
@@ -591,8 +645,8 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
         if (rankId.startsWith("CADET"))    return "88AAFF";
         if (rankId.equals("CAPTAIN"))      return "FFD700";
         if (rankId.equals("COMMANDER"))    return "FFB24A";
-        if (rankId.startsWith("LIEUTENANT")|| rankId.equals("ENSIGN")) return "38FF9A";
-        return "F2E7D5"; // enlisted
+        if (rankId.startsWith("LIEUTENANT") || rankId.equals("ENSIGN")) return "38FF9A";
+        return "F2E7D5";
     }
 
     private boolean isCadetRank(String rankId) {
@@ -609,7 +663,9 @@ public class RosterScreen extends HandledScreen<RosterScreenHandler> {
         detailScroll = clamp(detailScroll, 0, Math.max(0, total - visible));
     }
 
-    private int clamp(int v, int min, int max) { return Math.max(min, Math.min(max, v)); }
+    private int clamp(int v, int min, int max) {
+        return Math.max(min, Math.min(max, v));
+    }
 
     private boolean inside(double mx, double my, int x, int y, int w, int h) {
         return mx >= x && mx <= x + w && my >= y && my <= y + h;

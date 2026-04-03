@@ -24,11 +24,19 @@ public class GmEventService {
     private final TaskService taskService;
     private final GmEventConfig eventConfig;
 
-    private final List<EncounterTemplate> templates   = new ArrayList<>();
-    private final List<SpawnBlockEntry>   spawnBlocks = new ArrayList<>();
+    private final List<EncounterTemplate> templates = new ArrayList<>();
+    private final List<SpawnBlockEntry> spawnBlocks = new ArrayList<>();
     private final Map<String, ActiveEvent> activeEvents = new HashMap<>();
-    private final Map<UUID, String> mobToEvent   = new HashMap<>();
+    private final Map<UUID, String> mobToEvent = new HashMap<>();
     private final Map<String, Integer> spawnTimers = new HashMap<>();
+
+    /**
+     * Tool-spawn ownership:
+     * mob UUID -> GM/player UUID who spawned it with the Spawn Item Tool.
+     *
+     * Event-spawned mobs are NOT stored here.
+     */
+    private final Map<UUID, UUID> toolSpawnOwners = new HashMap<>();
 
     private static MinecraftServer server;
 
@@ -38,19 +46,23 @@ public class GmEventService {
             TaskService taskService,
             GmEventConfig eventConfig
     ) {
-        this.templateRepository   = Objects.requireNonNull(templateRepository);
+        this.templateRepository = Objects.requireNonNull(templateRepository);
         this.spawnBlockRepository = Objects.requireNonNull(spawnBlockRepository);
-        this.taskService          = Objects.requireNonNull(taskService);
-        this.eventConfig          = Objects.requireNonNull(eventConfig);
+        this.taskService = Objects.requireNonNull(taskService);
+        this.eventConfig = Objects.requireNonNull(eventConfig);
         this.templates.addAll(templateRepository.loadAll());
         this.spawnBlocks.addAll(spawnBlockRepository.loadAll());
     }
 
-    public static void setServer(MinecraftServer s) { server = s; }
+    public static void setServer(MinecraftServer s) {
+        server = s;
+    }
 
     // ── Template management ───────────────────────────────────────────────────
 
-    public List<EncounterTemplate> getTemplates() { return List.copyOf(templates); }
+    public List<EncounterTemplate> getTemplates() {
+        return List.copyOf(templates);
+    }
 
     public Optional<EncounterTemplate> findTemplate(String id) {
         return templates.stream().filter(t -> t.getId().equals(id)).findFirst();
@@ -90,7 +102,9 @@ public class GmEventService {
         return spawnBlocks.stream().filter(e -> e.matches(worldKey, pos)).findFirst();
     }
 
-    public List<SpawnBlockEntry> getAllSpawnBlocks() { return List.copyOf(spawnBlocks); }
+    public List<SpawnBlockEntry> getAllSpawnBlocks() {
+        return List.copyOf(spawnBlocks);
+    }
 
     // ── Event triggering ──────────────────────────────────────────────────────
 
@@ -117,8 +131,7 @@ public class GmEventService {
     public boolean triggerSpawnBlock(ServerWorld world, BlockPos pos) {
         SpawnBlockEntry entry = findSpawnBlock(world, pos).orElse(null);
         if (entry == null || entry.getTemplateId() == null) return false;
-        return triggerEvent(world, pos, entry.getTemplateId(), entry.getLinkedTaskId())
-                .isPresent();
+        return triggerEvent(world, pos, entry.getTemplateId(), entry.getLinkedTaskId()).isPresent();
     }
 
     // ── Tick ──────────────────────────────────────────────────────────────────
@@ -163,15 +176,11 @@ public class GmEventService {
                     var entity = world.getEntity(mobUuid);
                     if (!(entity instanceof MobEntity mob)) continue;
 
-                    // Prevent natural despawn
                     if (template.resolvePreventDespawn(eventConfig)) {
                         mob.setPersistent();
                     }
 
-                    // Extinguish sunlight fire
                     GmSkillHandler.tickMobProtection(world, mob, template, eventConfig);
-
-                    // Apply skills
                     GmSkillHandler.tickMob(world, mob, event, template);
                 }
             }
@@ -212,9 +221,102 @@ public class GmEventService {
         return List.copyOf(activeEvents.values());
     }
 
+    // ── Tool-spawn ownership / despawn ───────────────────────────────────────
+
+    /**
+     * Register a mob as manually spawned by a specific GM using the Spawn Item Tool.
+     */
+    public void registerToolSpawnedMob(UUID ownerUuid, UUID mobUuid) {
+        if (ownerUuid == null || mobUuid == null) return;
+        toolSpawnOwners.put(mobUuid, ownerUuid);
+    }
+
+    /**
+     * Despawn only tool-spawned mobs belonging to a specific player.
+     * Intended for the H hotkey.
+     */
+    public int despawnToolSpawnedMobs(UUID ownerUuid) {
+        if (server == null || ownerUuid == null) return 0;
+
+        int removed = 0;
+
+        for (Map.Entry<UUID, UUID> entry : new ArrayList<>(toolSpawnOwners.entrySet())) {
+            UUID mobUuid = entry.getKey();
+            UUID mobOwner = entry.getValue();
+
+            if (!ownerUuid.equals(mobOwner)) continue;
+
+            for (ServerWorld world : server.getWorlds()) {
+                var entity = world.getEntity(mobUuid);
+                if (entity != null) {
+                    entity.discard();
+                    removed++;
+                    break;
+                }
+            }
+
+            toolSpawnOwners.remove(mobUuid);
+        }
+
+        return removed;
+    }
+
+    /**
+     * Despawn every mob spawned by:
+     * - the Spawn Item Tool
+     * - active events
+     * - spawn blocks
+     *
+     * Intended for a GM command like /gmevent despawnall.
+     */
+    public int despawnAllSpawnedMobs() {
+        if (server == null) return 0;
+
+        int removed = 0;
+
+        // 1) Tool-spawned mobs
+        for (UUID mobUuid : new ArrayList<>(toolSpawnOwners.keySet())) {
+            for (ServerWorld world : server.getWorlds()) {
+                var entity = world.getEntity(mobUuid);
+                if (entity != null) {
+                    entity.discard();
+                    removed++;
+                    break;
+                }
+            }
+            toolSpawnOwners.remove(mobUuid);
+        }
+
+        // 2) Event / spawn-block mobs tracked by ActiveEvent
+        for (ActiveEvent event : new ArrayList<>(activeEvents.values())) {
+            for (UUID mobUuid : new ArrayList<>(event.getSpawnedMobUuids())) {
+                for (ServerWorld world : server.getWorlds()) {
+                    var entity = world.getEntity(mobUuid);
+                    if (entity != null) {
+                        entity.discard();
+                        removed++;
+                        break;
+                    }
+                }
+            }
+
+            event.getSpawnedMobUuids().clear();
+            event.end();
+        }
+
+        activeEvents.clear();
+        spawnTimers.clear();
+        mobToEvent.clear();
+
+        return removed;
+    }
+
     // ── Kill tracking ─────────────────────────────────────────────────────────
 
     public void onMobDeath(UUID mobUuid) {
+        // Clean up tool-spawn ownership if this was a manual spawn
+        toolSpawnOwners.remove(mobUuid);
+
         String eventId = mobToEvent.remove(mobUuid);
         if (eventId == null) return;
 
@@ -241,6 +343,7 @@ public class GmEventService {
     private void handleEventComplete(ActiveEvent event, EncounterTemplate template) {
         if (event.getLinkedTaskId() == null || event.getLinkedTaskId().isBlank()) return;
         if (server == null) return;
+
         for (var player : server.getPlayerManager().getPlayerList()) {
             var profile = net.shard.seconddawnrp.SecondDawnRP.PROFILE_MANAGER
                     .getLoadedProfile(player.getUuid());
@@ -255,21 +358,27 @@ public class GmEventService {
     public boolean shouldCancelDamage(UUID mobUuid, DamageSource source) {
         String eventId = mobToEvent.get(mobUuid);
         if (eventId == null) return false;
+
         ActiveEvent event = activeEvents.get(eventId);
         if (event == null) return false;
+
         EncounterTemplate template = findTemplate(event.getTemplateId()).orElse(null);
         if (template == null) return false;
         if (server == null) return false;
+
         for (var world : server.getWorlds()) {
             var entity = world.getEntity(mobUuid);
             if (entity instanceof MobEntity mob) {
                 return GmSkillHandler.shouldCancelDamage(source, mob, template, eventConfig);
             }
         }
+
         return false;
     }
 
-    public GmEventConfig getEventConfig() { return eventConfig; }
+    public GmEventConfig getEventConfig() {
+        return eventConfig;
+    }
 
     // ── Spawn helpers ─────────────────────────────────────────────────────────
 
@@ -279,9 +388,9 @@ public class GmEventService {
                 template.getTotalSpawnCount() - event.getTotalSpawned(),
                 template.getMaxActiveAtOnce() - event.getActiveCount()
         );
+
         for (int i = 0; i < toSpawn; i++) {
-            spawnSingle(world, randomPosNear(origin, template.getSpawnRadiusBlocks()),
-                    template, event);
+            spawnSingle(world, randomPosNear(origin, template.getSpawnRadiusBlocks()), template, event);
         }
     }
 
@@ -297,7 +406,8 @@ public class GmEventService {
         if (!(entity instanceof MobEntity mob)) return;
 
         mob.refreshPositionAndAngles(
-                pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, 0, 0);
+                pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, 0, 0
+        );
 
         if (template.getMaxHealth() > 0) {
             var healthAttr = mob.getAttributeInstance(EntityAttributes.GENERIC_MAX_HEALTH);
@@ -310,10 +420,8 @@ public class GmEventService {
             if (armorAttr != null) armorAttr.setBaseValue(template.getArmor());
         }
 
-        // Apply vanilla status effects from template
         GmSkillHandler.applyVanillaEffects(mob, template.getStatusEffects());
 
-        // Prevent despawn immediately on spawn
         if (template.resolvePreventDespawn(eventConfig)) {
             mob.setPersistent();
         }
@@ -347,5 +455,4 @@ public class GmEventService {
     public ActiveEvent findActiveEvent(String eventId) {
         return activeEvents.get(eventId);
     }
-
 }
