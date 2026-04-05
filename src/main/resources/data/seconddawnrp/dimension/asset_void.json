@@ -1,0 +1,15 @@
+{
+  "type": "seconddawnrp:asset_void",
+  "generator": {
+    "type": "minecraft:flat",
+    "settings": {
+      "layers": [
+        { "block": "minecraft:bedrock", "height": 1 }
+      ],
+      "biome": "minecraft:the_void",
+      "lakes": false,
+      "features": false,
+      "structure_overrides": []
+    }
+  }
+}

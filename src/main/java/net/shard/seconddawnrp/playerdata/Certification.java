@@ -6,7 +6,10 @@ public enum Certification {
     TRICORDER_BASIC("tricorder_basic", CertificationCategory.SCIENCE),
     MEDICAL_BASIC("medical_basic", CertificationCategory.MEDICAL),
     ENGINEERING_BASIC("engineering_basic", CertificationCategory.ENGINEERING),
-    OPERATIONS_DISPATCH("operations_dispatch", CertificationCategory.OPERATIONS);
+    OPERATIONS_DISPATCH("operations_dispatch", CertificationCategory.OPERATIONS),
+
+    // Phase 5.75 — Transporter System
+    TRANSPORTER_OPERATOR("transporter_operator", CertificationCategory.OPERATIONS);
 
     private final String id;
     private final CertificationCategory category;
@@ -16,11 +19,6 @@ public enum Certification {
         this.category = category;
     }
 
-    public String getId() {
-        return id;
-    }
-
-    public CertificationCategory getCategory() {
-        return category;
-    }
+    public String getId() { return id; }
+    public CertificationCategory getCategory() { return category; }
 }

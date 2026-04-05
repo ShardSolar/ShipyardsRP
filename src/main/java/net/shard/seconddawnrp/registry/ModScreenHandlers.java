@@ -17,6 +17,7 @@ import net.shard.seconddawnrp.tasksystem.pad.TaskPadOpeningData;
 import net.shard.seconddawnrp.tasksystem.pad.TaskPadScreenHandler;
 import net.shard.seconddawnrp.tasksystem.terminal.TerminalScreenHandler;
 import net.shard.seconddawnrp.tasksystem.terminal.TerminalScreenOpenData;
+import net.shard.seconddawnrp.transporter.client.TransporterScreenHandler;
 
 public class ModScreenHandlers {
 
@@ -66,6 +67,14 @@ public class ModScreenHandlers {
                             RosterOpenData.PACKET_CODEC)
             );
 
+    public static final ScreenHandlerType<TransporterScreenHandler> TRANSPORTER_SCREEN =
+            Registry.register(
+                    Registries.SCREEN_HANDLER,
+                    SecondDawnRP.id("transporter_controller"),
+                    new ScreenHandlerType<>(
+                            (syncId, inv) -> new TransporterScreenHandler(syncId, inv),
+                            FeatureFlags.VANILLA_FEATURES)
+            );
     public static void register() {
         // no-op
     }

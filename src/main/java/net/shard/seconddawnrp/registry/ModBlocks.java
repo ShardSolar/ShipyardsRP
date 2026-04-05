@@ -89,6 +89,14 @@ public final class ModBlocks {
                             .sounds(BlockSoundGroup.METAL)
                             .requiresTool()));
 
+    public static final Block TRANSPORTER_CONTROLLER = register("transporter_controller",
+            new net.shard.seconddawnrp.transporter.TransporterControllerBlock(
+                    AbstractBlock.Settings.create()
+                            .mapColor(MapColor.IRON_GRAY)
+                            .strength(3.0f, 6.0f)
+                            .sounds(BlockSoundGroup.METAL)
+                            .requiresTool()));
+
     // ── Block entity types ────────────────────────────────────────────────────
 
     public static BlockEntityType<WarpCoreControllerBlockEntity> WARP_CORE_CONTROLLER_ENTITY;

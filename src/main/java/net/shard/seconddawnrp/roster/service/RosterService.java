@@ -8,12 +8,12 @@ import net.shard.seconddawnrp.division.Rank;
 import net.shard.seconddawnrp.playerdata.PlayerProfile;
 import net.shard.seconddawnrp.playerdata.PlayerProfileManager;
 import net.shard.seconddawnrp.playerdata.ProgressionPath;
+import net.shard.seconddawnrp.progression.ServiceRecordEntry;
 import net.shard.seconddawnrp.roster.data.RosterEntry;
 import net.shard.seconddawnrp.roster.data.RosterOpenData;
+import net.shard.seconddawnrp.roster.data.ServiceRecordEntryDto;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 
 public class RosterService {
 
@@ -59,7 +59,36 @@ public class RosterService {
                 : (canViewAll ? 99 : 0);
         if (canViewAll) authority = 99;
 
-        return new RosterOpenData(divisionTitle, entries, authority);
+        // ── Build service record history per member (capped at 50 entries) ──
+        Map<String, List<ServiceRecordEntryDto>> records = new HashMap<>();
+        if (SecondDawnRP.SERVICE_RECORD_SERVICE != null) {
+            for (RosterEntry entry : entries) {
+                try {
+                    UUID uuid = UUID.fromString(entry.playerUuidStr());
+                    List<ServiceRecordEntry> history =
+                            SecondDawnRP.SERVICE_RECORD_SERVICE.getAll(uuid);
+                    List<ServiceRecordEntryDto> dtos = new ArrayList<>();
+                    int limit = Math.min(history.size(), 50);
+                    for (int i = 0; i < limit; i++) {
+                        ServiceRecordEntry e = history.get(i);
+                        dtos.add(new ServiceRecordEntryDto(
+                                e.getEntryId(),
+                                e.getTimestamp(),
+                                e.getType().name(),
+                                e.getPointsDelta(),
+                                e.getActorName() != null ? e.getActorName() : "Unknown",
+                                e.getReason(),
+                                e.getDivisionContext()
+                        ));
+                    }
+                    records.put(entry.playerUuidStr(), dtos);
+                } catch (IllegalArgumentException ignored) {
+                    // Malformed UUID — skip
+                }
+            }
+        }
+
+        return new RosterOpenData(divisionTitle, entries, authority, records);
     }
 
     private RosterEntry toEntry(PlayerProfile p) {
@@ -162,6 +191,14 @@ public class RosterService {
         target.setRank(next);
         SecondDawnRP.PROFILE_MANAGER.markDirty(target.getPlayerId());
 
+        // Log to service record
+        if (SecondDawnRP.SERVICE_RECORD_SERVICE != null) {
+            String div = target.getDivision() != null ? target.getDivision().name() : "";
+            SecondDawnRP.SERVICE_RECORD_SERVICE.logPromotion(
+                    target.getPlayerId(), div, formatRankId(next),
+                    actor.getUuid().toString(), actor.getName().getString());
+        }
+
         ServerPlayerEntity targetPlayer = server != null
                 ? server.getPlayerManager().getPlayer(target.getPlayerId()) : null;
         if (targetPlayer != null) {
@@ -206,6 +243,14 @@ public class RosterService {
             SecondDawnRP.OFFICER_SLOT_SERVICE.onSlotOpened(current);
         }
 
+        // Log to service record
+        if (SecondDawnRP.SERVICE_RECORD_SERVICE != null) {
+            String div = target.getDivision() != null ? target.getDivision().name() : "";
+            SecondDawnRP.SERVICE_RECORD_SERVICE.logDemotion(
+                    target.getPlayerId(), div, formatRankId(prev),
+                    actor.getUuid().toString(), actor.getName().getString());
+        }
+
         ServerPlayerEntity targetPlayer = server != null
                 ? server.getPlayerManager().getPlayer(target.getPlayerId()) : null;
         if (targetPlayer != null) {
@@ -215,28 +260,56 @@ public class RosterService {
         return "Demoted " + target.getDisplayName() + " to " + formatRankId(prev) + ".";
     }
 
-    private String handleCadetEnrol(ServerPlayerEntity actor, PlayerProfile actorProfile, UUID targetUuid) {
-        if (!SecondDawnRP.PERMISSION_SERVICE.canCadetEnrol(actor, actorProfile)) return "No permission.";
+    private String handleCadetEnrol(ServerPlayerEntity actor, PlayerProfile actorProfile,
+                                    UUID targetUuid) {
+        if (!SecondDawnRP.PERMISSION_SERVICE.canCadetEnrol(actor, actorProfile))
+            return "No permission.";
         boolean ok = SecondDawnRP.CADET_SERVICE.enrol(targetUuid, actor);
+        if (ok && SecondDawnRP.SERVICE_RECORD_SERVICE != null) {
+            PlayerProfile target = profileManager.getLoadedProfile(targetUuid);
+            String div = target != null && target.getDivision() != null
+                    ? target.getDivision().name() : "";
+            SecondDawnRP.SERVICE_RECORD_SERVICE.logCadetEnrolled(
+                    targetUuid, div,
+                    actor.getUuid().toString(), actor.getName().getString());
+        }
         return ok ? "Enrolled in cadet track." : "Enrolment failed — check console.";
     }
 
-    private String handleCadetPromote(ServerPlayerEntity actor, PlayerProfile actorProfile, UUID targetUuid) {
-        if (!SecondDawnRP.PERMISSION_SERVICE.canCadetPromote(actor, actorProfile)) return "No permission.";
+    private String handleCadetPromote(ServerPlayerEntity actor, PlayerProfile actorProfile,
+                                      UUID targetUuid) {
+        if (!SecondDawnRP.PERMISSION_SERVICE.canCadetPromote(actor, actorProfile))
+            return "No permission.";
         return SecondDawnRP.CADET_SERVICE.promote(actor, targetUuid);
     }
 
     private String handleCadetGraduate(ServerPlayerEntity actor, PlayerProfile actorProfile,
                                        UUID targetUuid, String startRankId) {
-        if (!SecondDawnRP.PERMISSION_SERVICE.canCadetGraduate(actor, actorProfile)) return "No permission.";
+        if (!SecondDawnRP.PERMISSION_SERVICE.canCadetGraduate(actor, actorProfile))
+            return "No permission.";
         Rank startRank = parseRankById(startRankId);
         if (startRank == null) return "Unknown rank: " + startRankId;
         return SecondDawnRP.CADET_SERVICE.proposeGraduation(actor, targetUuid, startRank);
     }
 
-    private String handleCadetApprove(ServerPlayerEntity actor, PlayerProfile actorProfile, UUID targetUuid) {
-        if (!SecondDawnRP.PERMISSION_SERVICE.canCadetApprove(actor, actorProfile)) return "No permission.";
-        return SecondDawnRP.CADET_SERVICE.approveGraduation(actor, targetUuid);
+    private String handleCadetApprove(ServerPlayerEntity actor, PlayerProfile actorProfile,
+                                      UUID targetUuid) {
+        if (!SecondDawnRP.PERMISSION_SERVICE.canCadetApprove(actor, actorProfile))
+            return "No permission.";
+        String result = SecondDawnRP.CADET_SERVICE.approveGraduation(actor, targetUuid);
+        // Log graduation if successful
+        if (!result.startsWith("No permission") && !result.startsWith("Unknown")
+                && SecondDawnRP.SERVICE_RECORD_SERVICE != null) {
+            PlayerProfile target = profileManager.getLoadedProfile(targetUuid);
+            String div = target != null && target.getDivision() != null
+                    ? target.getDivision().name() : "";
+            String rankName = target != null && target.getRank() != null
+                    ? formatRankId(target.getRank()) : "Unknown";
+            SecondDawnRP.SERVICE_RECORD_SERVICE.logCadetGraduated(
+                    targetUuid, div, rankName,
+                    actor.getUuid().toString(), actor.getName().getString());
+        }
+        return result;
     }
 
     private String handleCommend(ServerPlayerEntity actor, PlayerProfile actorProfile,
@@ -244,6 +317,7 @@ public class RosterService {
         if (!SecondDawnRP.PERMISSION_SERVICE.canIssueCommendation(actor, actorProfile)) {
             return "No permission.";
         }
+        // CommendationService already calls SERVICE_RECORD_SERVICE internally
         return SecondDawnRP.COMMENDATION_SERVICE.commend(actor, targetUuid, points, reason);
     }
 
@@ -264,6 +338,15 @@ public class RosterService {
         target.setDivision(newDiv);
         SecondDawnRP.PROFILE_MANAGER.markDirty(target.getPlayerId());
 
+        // Log to service record
+        if (SecondDawnRP.SERVICE_RECORD_SERVICE != null) {
+            SecondDawnRP.SERVICE_RECORD_SERVICE.logTransfer(
+                    target.getPlayerId(),
+                    oldDiv != null ? oldDiv.name() : "UNASSIGNED",
+                    newDiv.name(),
+                    actor.getUuid().toString(), actor.getName().getString());
+        }
+
         ServerPlayerEntity targetPlayer = server != null
                 ? server.getPlayerManager().getPlayer(target.getPlayerId()) : null;
         if (targetPlayer != null) {
@@ -281,8 +364,17 @@ public class RosterService {
         }
 
         String name = target.getDisplayName();
+        String oldDiv = target.getDivision() != null ? target.getDivision().name() : "UNASSIGNED";
+
         target.setDivision(Division.UNASSIGNED);
         SecondDawnRP.PROFILE_MANAGER.markDirty(target.getPlayerId());
+
+        // Log to service record
+        if (SecondDawnRP.SERVICE_RECORD_SERVICE != null) {
+            SecondDawnRP.SERVICE_RECORD_SERVICE.logDismissal(
+                    target.getPlayerId(), oldDiv,
+                    actor.getUuid().toString(), actor.getName().getString(), null);
+        }
 
         ServerPlayerEntity targetPlayer = server != null
                 ? server.getPlayerManager().getPlayer(target.getPlayerId()) : null;
@@ -296,10 +388,9 @@ public class RosterService {
         return "Dismissed " + name + " from their division.";
     }
 
-    private boolean canActOnTarget(ServerPlayerEntity actor, PlayerProfile actorProfile, PlayerProfile target) {
-        if (SecondDawnRP.PERMISSION_SERVICE.canViewAllDivisions(actor)) {
-            return true;
-        }
+    private boolean canActOnTarget(ServerPlayerEntity actor, PlayerProfile actorProfile,
+                                   PlayerProfile target) {
+        if (SecondDawnRP.PERMISSION_SERVICE.canViewAllDivisions(actor)) return true;
         if (actorProfile == null) return false;
         if (actorProfile.getDivision() == null || target.getDivision() == null) return false;
         return actorProfile.getDivision() == target.getDivision();
@@ -311,8 +402,7 @@ public class RosterService {
     }
 
     private Rank nextRank(Rank current) {
-        Rank[] values = Rank.values();
-        for (Rank r : values) {
+        for (Rank r : Rank.values()) {
             if (r.getTrack() == current.getTrack()
                     && r.getAuthorityLevel() == current.getAuthorityLevel() + 1
                     && !isCadetRank(r)) {
@@ -323,8 +413,7 @@ public class RosterService {
     }
 
     private Rank previousRank(Rank current) {
-        Rank[] values = Rank.values();
-        for (Rank r : values) {
+        for (Rank r : Rank.values()) {
             if (r.getTrack() == current.getTrack()
                     && r.getAuthorityLevel() == current.getAuthorityLevel() - 1
                     && !isCadetRank(r)) {
@@ -336,11 +425,7 @@ public class RosterService {
     }
 
     private Rank parseRank(String name) {
-        try {
-            return Rank.valueOf(name);
-        } catch (Exception e) {
-            return null;
-        }
+        try { return Rank.valueOf(name); } catch (Exception e) { return null; }
     }
 
     private Rank parseRankById(String id) {

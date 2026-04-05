@@ -22,6 +22,8 @@ import net.shard.seconddawnrp.tasksystem.pad.AdminTaskViewModel;
 import net.shard.seconddawnrp.tasksystem.pad.OperationsPadScreen;
 import net.shard.seconddawnrp.tasksystem.pad.TaskPadScreen;
 import net.shard.seconddawnrp.tasksystem.terminal.TerminalScreen;
+import net.shard.seconddawnrp.transporter.client.TransporterClientHandler;
+import net.shard.seconddawnrp.transporter.client.TransporterControllerScreen;
 import net.shard.seconddawnrp.warpcore.client.WarpCoreClientHandler;
 
 import java.util.List;
@@ -36,8 +38,9 @@ public class SecondDawnRPClient implements ClientModInitializer {
         HandledScreens.register(ModScreenHandlers.TERMINAL_SCREEN, TerminalScreen::new);
         HandledScreens.register(ModScreenHandlers.SPAWN_CONFIG_SCREEN, SpawnConfigScreen::new);
         HandledScreens.register(ModScreenHandlers.SPAWN_ITEM_SCREEN, SpawnItemScreen::new);
+        HandledScreens.register(ModScreenHandlers.TRANSPORTER_SCREEN, TransporterControllerScreen::new);
 
-
+        TransporterClientHandler.registerClientReceivers();
         WarpCoreClientHandler.register();
         net.shard.seconddawnrp.gmevent.client.EnvEffectClientHandler.register();
         net.shard.seconddawnrp.gmevent.client.TriggerClientHandler.register();

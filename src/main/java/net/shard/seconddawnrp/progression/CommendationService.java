@@ -12,13 +12,7 @@ import java.util.UUID;
 
 /**
  * Handles manual commendations and demerits issued by senior officers.
- *
- * Positive points = commendation
- * Negative points = demerit
- *
- * Supports inline signed values at the start of the reason:
- *   "+15 Excellent leadership"
- *   "-10 Late to duty"
+ * Phase X: now writes to ServiceRecordService for history tracking.
  */
 public class CommendationService {
 
@@ -26,14 +20,19 @@ public class CommendationService {
     private final OfficerProgressionConfig config;
     private MinecraftServer server;
 
+    // Injected after construction — avoids circular dependency
+    private ServiceRecordService serviceRecordService;
+
     public CommendationService(PlayerProfileManager profileManager,
                                OfficerProgressionConfig config) {
         this.profileManager = profileManager;
         this.config = config;
     }
 
-    public void setServer(MinecraftServer server) {
-        this.server = server;
+    public void setServer(MinecraftServer server) { this.server = server; }
+
+    public void setServiceRecordService(ServiceRecordService srs) {
+        this.serviceRecordService = srs;
     }
 
     public String commend(ServerPlayerEntity actor, UUID targetUuid,
@@ -53,7 +52,8 @@ public class CommendationService {
 
         int cap = config.getMaxCommendationPoints();
         if (points == 0 || points < -cap || points > cap) {
-            return "Point amount must be between -" + cap + " and " + cap + ", and cannot be 0.";
+            return "Point amount must be between -" + cap + " and " + cap
+                    + ", and cannot be 0.";
         }
 
         PlayerProfile target = profileManager.getLoadedProfile(targetUuid);
@@ -64,13 +64,24 @@ public class CommendationService {
         target.addRankPoints(points);
         SecondDawnRP.PROFILE_MANAGER.markDirty(targetUuid);
 
+        // Write service record entry
+        if (serviceRecordService != null) {
+            String divisionCtx = target.getDivision() != null
+                    ? target.getDivision().name() : "";
+            serviceRecordService.logCommendation(
+                    targetUuid, divisionCtx, points, reason,
+                    actor.getUuid().toString(), actor.getName().getString());
+        }
+
         boolean isCommendation = points > 0;
         int absPoints = Math.abs(points);
 
-        System.out.println("[SecondDawnRP] " + (isCommendation ? "COMMENDATION" : "DEMERIT") + ": "
+        System.out.println("[SecondDawnRP] "
+                + (isCommendation ? "COMMENDATION" : "DEMERIT") + ": "
                 + actor.getName().getString() + " -> " + target.getDisplayName()
                 + " | " + points + " pts | Reason: " + reason);
 
+        // Notify target
         ServerPlayerEntity targetPlayer = server != null
                 ? server.getPlayerManager().getPlayer(targetUuid) : null;
         if (targetPlayer != null) {
@@ -89,71 +100,44 @@ public class CommendationService {
             }
         }
 
+        // Broadcast
         if (server != null) {
-            Text broadcast;
-            if (isCommendation) {
-                broadcast = Text.literal(
-                                "[Commendation] " + target.getDisplayName()
-                                        + " has been commended by " + actor.getName().getString()
-                                        + " for: " + reason + ".")
-                        .formatted(Formatting.GOLD);
-            } else {
-                broadcast = Text.literal(
-                                "[Demerit] " + target.getDisplayName()
-                                        + " has received a demerit from " + actor.getName().getString()
-                                        + " for: " + reason + ".")
-                        .formatted(Formatting.RED);
-            }
-
+            Text broadcast = isCommendation
+                    ? Text.literal("[Commendation] " + target.getDisplayName()
+                            + " commended by " + actor.getName().getString()
+                            + " for: " + reason + ".")
+                    .formatted(Formatting.GOLD)
+                    : Text.literal("[Demerit] " + target.getDisplayName()
+                            + " received a demerit from " + actor.getName().getString()
+                            + " for: " + reason + ".")
+                    .formatted(Formatting.RED);
             server.getPlayerManager().getPlayerList()
                     .forEach(p -> p.sendMessage(broadcast, false));
         }
 
-        if (isCommendation) {
-            return "Commendation issued to " + target.getDisplayName()
-                    + " for " + absPoints + " points.";
-        } else {
-            return "Demerit issued to " + target.getDisplayName()
-                    + " for " + absPoints + " points.";
-        }
+        return isCommendation
+                ? "Commendation issued to " + target.getDisplayName()
+                + " for " + absPoints + " points."
+                : "Demerit issued to " + target.getDisplayName()
+                + " for " + absPoints + " points.";
     }
 
     private ParsedCommendationInput parseInlinePoints(int fallbackPoints, String rawReason) {
-        if (rawReason == null) {
-            return new ParsedCommendationInput(fallbackPoints, "");
-        }
-
+        if (rawReason == null) return new ParsedCommendationInput(fallbackPoints, "");
         String trimmed = rawReason.trim();
-        if (trimmed.isEmpty()) {
-            return new ParsedCommendationInput(fallbackPoints, "");
-        }
+        if (trimmed.isEmpty()) return new ParsedCommendationInput(fallbackPoints, "");
 
-        // Accept leading signed integer only:
-        // +15 Great work
-        // -10 Late to duty
-        // +25
         int idx = 0;
         char first = trimmed.charAt(0);
-        if (first != '+' && first != '-') {
-            return new ParsedCommendationInput(fallbackPoints, trimmed);
-        }
-
+        if (first != '+' && first != '-') return new ParsedCommendationInput(fallbackPoints, trimmed);
         idx++;
-        while (idx < trimmed.length() && Character.isDigit(trimmed.charAt(idx))) {
-            idx++;
-        }
-
-        // No digits after sign
-        if (idx == 1) {
-            return new ParsedCommendationInput(fallbackPoints, trimmed);
-        }
+        while (idx < trimmed.length() && Character.isDigit(trimmed.charAt(idx))) idx++;
+        if (idx == 1) return new ParsedCommendationInput(fallbackPoints, trimmed);
 
         String numberPart = trimmed.substring(0, idx);
-        String remainder = trimmed.substring(idx).trim();
-
+        String remainder  = trimmed.substring(idx).trim();
         try {
-            int parsedPoints = Integer.parseInt(numberPart);
-            return new ParsedCommendationInput(parsedPoints, remainder);
+            return new ParsedCommendationInput(Integer.parseInt(numberPart), remainder);
         } catch (NumberFormatException e) {
             return new ParsedCommendationInput(fallbackPoints, trimmed);
         }

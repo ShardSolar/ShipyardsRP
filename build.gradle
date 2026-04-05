@@ -1,6 +1,7 @@
 plugins {
     id 'fabric-loom' version '1.15-SNAPSHOT'
     id 'maven-publish'
+    id 'org.jetbrains.kotlin.jvm'
 }
 
 version = project.mod_version
@@ -64,6 +65,7 @@ dependencies {
     include modApi("teamreborn:energy:4.1.0")
 
     modCompileOnly "cc.tweaked:cc-tweaked-1.21.1-fabric-api:1.117.1"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
 }
 
 loom {
@@ -104,8 +106,6 @@ tasks.withType(JavaCompile).configureEach {
 java {
     withSourcesJar()
 
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
 }
 
 jar {
@@ -123,4 +123,7 @@ publishing {
 
     repositories {
     }
+}
+kotlin {
+    jvmToolchain(21)
 }

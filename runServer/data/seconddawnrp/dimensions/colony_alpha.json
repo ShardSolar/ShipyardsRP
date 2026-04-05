@@ -1,0 +1,10 @@
+{
+  "dimensionId": "colony_alpha",
+  "displayName": "Colony Alpha",
+  "description": "A temperate Class-M colony world. Breathable atmosphere, moderate gravity.",
+  "defaultEntryX": 0.5,
+  "defaultEntryY": 64.0,
+  "defaultEntryZ": 0.5,
+  "taskPoolIsolated": true,
+  "proximityRequired": false
+}

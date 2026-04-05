@@ -7,10 +7,12 @@ import net.minecraft.screen.ScreenHandler;
 import net.shard.seconddawnrp.registry.ModScreenHandlers;
 import net.shard.seconddawnrp.roster.data.RosterEntry;
 import net.shard.seconddawnrp.roster.data.RosterOpenData;
+import net.shard.seconddawnrp.roster.data.ServiceRecordEntryDto;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 public class RosterScreenHandler extends ScreenHandler {
 
@@ -20,16 +22,14 @@ public class RosterScreenHandler extends ScreenHandler {
     private int selectedIndex = -1;
     private String feedbackMessage = "";
     private long feedbackExpiry = 0;
+    private Map<String, List<ServiceRecordEntryDto>> serviceRecords;
 
-    /**
-     * Used both server-side (by RosterScreenHandlerFactory.createMenu)
-     * and client-side (by ExtendedScreenHandlerType via the PACKET_CODEC).
-     */
     public RosterScreenHandler(int syncId, PlayerInventory inventory, RosterOpenData data) {
         super(ModScreenHandlers.ROSTER_SCREEN, syncId);
         this.members         = new ArrayList<>(data.members());
         this.divisionName    = data.divisionName();
         this.viewerAuthority = data.viewerAuthority();
+        this.serviceRecords  = data.serviceRecords();
         if (!members.isEmpty()) selectedIndex = 0;
     }
 
@@ -49,10 +49,16 @@ public class RosterScreenHandler extends ScreenHandler {
         return members.get(selectedIndex);
     }
 
+    public List<ServiceRecordEntryDto> getServiceRecords(String playerUuidStr) {
+        if (serviceRecords == null) return List.of();
+        return serviceRecords.getOrDefault(playerUuidStr, List.of());
+    }
+
     public void applyRefresh(RosterOpenData data, String feedback) {
         this.members         = new ArrayList<>(data.members());
         this.divisionName    = data.divisionName();
         this.viewerAuthority = data.viewerAuthority();
+        this.serviceRecords  = data.serviceRecords();
         if (selectedIndex >= members.size()) {
             selectedIndex = members.isEmpty() ? -1 : 0;
         }
@@ -67,14 +73,14 @@ public class RosterScreenHandler extends ScreenHandler {
         return feedbackMessage;
     }
 
-    // ── Permission helpers ────────────────────────────────────────────────────
+    // ── Permissions ───────────────────────────────────────────────────────────
 
     public boolean canManageRanks()   { return viewerAuthority >= 7; }
     public boolean canManageMembers() { return viewerAuthority >= 6; }
     public boolean canCommend()       { return viewerAuthority >= 8; }
     public boolean isAdmin()          { return viewerAuthority >= 99; }
 
-    // ── ScreenHandler boilerplate ─────────────────────────────────────────────
+    // ── Boilerplate ───────────────────────────────────────────────────────────
 
     @Override public boolean canUse(PlayerEntity player) { return true; }
     @Override public ItemStack quickMove(PlayerEntity player, int slot) { return ItemStack.EMPTY; }

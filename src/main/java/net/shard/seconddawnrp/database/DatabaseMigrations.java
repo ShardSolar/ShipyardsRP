@@ -4,7 +4,7 @@ import java.sql.*;
 
 public final class DatabaseMigrations {
 
-    public static final int CURRENT_SCHEMA_VERSION = 10;
+    public static final int CURRENT_SCHEMA_VERSION = 12;
 
     public void migrate(Connection connection) throws SQLException {
         createSchemaVersionTableIfMissing(connection);
@@ -19,6 +19,8 @@ public final class DatabaseMigrations {
         if (v < 8)  { applyVersion8(connection);  setSchemaVersion(connection, 8);  v = 8;  }
         if (v < 9)  { applyVersion9(connection);  setSchemaVersion(connection, 9);  v = 9;  }
         if (v < 10) { applyVersion10(connection); setSchemaVersion(connection, 10); v = 10; }
+        if (v < 11) { applyVersion11(connection); setSchemaVersion(connection, 11); v = 11; }
+        if (v < 12) { applyVersion11(connection); setSchemaVersion(connection, 12); v = 12; }
         if (v > CURRENT_SCHEMA_VERSION)
             throw new SQLException("DB schema " + v + " newer than supported " + CURRENT_SCHEMA_VERSION);
     }
@@ -271,6 +273,74 @@ public final class DatabaseMigrations {
         // -1 = use tier default (backward compatible with all existing rows)
         execSafe(c, "ALTER TABLE long_term_injuries ADD COLUMN sessions_required INTEGER NOT NULL DEFAULT -1");
     }
+
+    private void applyVersion11(Connection c) throws SQLException {
+        // Dimension activation state — persisted across restarts
+        try (Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE IF NOT EXISTS dimension_registry ("
+                    + "dimension_id TEXT PRIMARY KEY, "
+                    + "active INTEGER NOT NULL DEFAULT 0)");
+        }
+
+        // Named ship coordinate destinations (Sickbay, Bridge, Brig, etc.)
+        try (Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE IF NOT EXISTS ship_locations ("
+                    + "name TEXT PRIMARY KEY, "
+                    + "x REAL NOT NULL, "
+                    + "y REAL NOT NULL, "
+                    + "z REAL NOT NULL, "
+                    + "world_key TEXT NOT NULL DEFAULT 'minecraft:overworld', "
+                    + "registered_by TEXT, "
+                    + "registered_at INTEGER NOT NULL)");
+        }
+
+        // Beam-up requests from colony dimension players
+        try (Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE IF NOT EXISTS beam_up_requests ("
+                    + "request_id TEXT PRIMARY KEY, "
+                    + "player_uuid TEXT NOT NULL, "
+                    + "player_name TEXT NOT NULL, "
+                    + "source_dimension TEXT NOT NULL, "
+                    + "requested_at INTEGER NOT NULL, "
+                    + "status TEXT NOT NULL DEFAULT 'PENDING', "
+                    + "handled_by TEXT, "
+                    + "handled_at INTEGER)");
+            s.execute("CREATE INDEX IF NOT EXISTS idx_beamup_status "
+                    + "ON beam_up_requests (status)");
+        }
+
+        // Registered transporter controllers
+        try (Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE IF NOT EXISTS transporter_controllers ("
+                    + "controller_id TEXT PRIMARY KEY, "
+                    + "world_key TEXT NOT NULL, "
+                    + "block_pos_long INTEGER NOT NULL, "
+                    + "registered_by TEXT, "
+                    + "registered_at INTEGER NOT NULL)");
+            s.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_controller_pos "
+                    + "ON transporter_controllers (world_key, block_pos_long)");
+        }
+    }
+
+    private void applyVersion12(Connection c) throws SQLException {
+        try (Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE IF NOT EXISTS service_record_entries ("
+                    + "entry_id TEXT PRIMARY KEY, "
+                    + "player_uuid TEXT NOT NULL, "
+                    + "timestamp INTEGER NOT NULL, "
+                    + "type TEXT NOT NULL, "
+                    + "points_delta INTEGER NOT NULL DEFAULT 0, "
+                    + "actor_uuid TEXT, "
+                    + "actor_name TEXT, "
+                    + "reason TEXT NOT NULL DEFAULT '', "
+                    + "division_context TEXT NOT NULL DEFAULT '')");
+            s.execute("CREATE INDEX IF NOT EXISTS idx_service_record_player "
+                    + "ON service_record_entries (player_uuid)");
+            s.execute("CREATE INDEX IF NOT EXISTS idx_service_record_type "
+                    + "ON service_record_entries (player_uuid, type)");
+        }
+    }
+
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 

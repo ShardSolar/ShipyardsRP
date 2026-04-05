@@ -1,0 +1,10 @@
+{
+  "dimensionId": "colony_alpha",
+  "displayName": "Colony Alpha",
+  "description": "A temperate Class-M colony world. Breathable atmosphere, standard gravity. Away mission staging area.",
+  "defaultEntryX": 0.5,
+  "defaultEntryY": 5.0,
+  "defaultEntryZ": 0.5,
+  "taskPoolIsolated": true,
+  "proximityRequired": false
+}

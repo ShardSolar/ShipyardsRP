@@ -1,0 +1,10 @@
+{
+  "dimensionId": "ship_dimension",
+  "displayName": "Ship — Main Vessel",
+  "description": "The primary starship. Internal transport only — use named ship locations for destinations.",
+  "defaultEntryX": 0.5,
+  "defaultEntryY": 1.0,
+  "defaultEntryZ": 0.5,
+  "taskPoolIsolated": false,
+  "proximityRequired": false
+}

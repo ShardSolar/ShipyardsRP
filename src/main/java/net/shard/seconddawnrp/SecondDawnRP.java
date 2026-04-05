@@ -46,6 +46,9 @@ import net.shard.seconddawnrp.dice.network.RpPaddNetworking;
 import net.shard.seconddawnrp.dice.service.RollService;
 import net.shard.seconddawnrp.dice.service.RpPaddService;
 import net.shard.seconddawnrp.dice.service.RpPaddSubmissionService;
+import net.shard.seconddawnrp.dimension.GmLocationCommands;
+import net.shard.seconddawnrp.dimension.LocationRegistry;
+import net.shard.seconddawnrp.dimension.LocationService;
 import net.shard.seconddawnrp.gmevent.client.AnomalyClientHandler;
 import net.shard.seconddawnrp.gmevent.command.GmAnomalyCommands;
 import net.shard.seconddawnrp.gmevent.command.GmEnvCommands;
@@ -76,17 +79,7 @@ import net.shard.seconddawnrp.playerdata.PlayerProfileService;
 import net.shard.seconddawnrp.playerdata.ProfileSyncService;
 import net.shard.seconddawnrp.playerdata.persistence.ProfileRepository;
 import net.shard.seconddawnrp.playerdata.persistence.SqlProfileRepository;
-import net.shard.seconddawnrp.progression.CadetRankConfig;
-import net.shard.seconddawnrp.progression.CadetService;
-import net.shard.seconddawnrp.progression.CommendationService;
-import net.shard.seconddawnrp.progression.GroupTaskService;
-import net.shard.seconddawnrp.progression.OfficerProgressionConfig;
-import net.shard.seconddawnrp.progression.OfficerProgressionService;
-import net.shard.seconddawnrp.progression.OfficerSlotConfig;
-import net.shard.seconddawnrp.progression.OfficerSlotService;
-import net.shard.seconddawnrp.progression.ProgressionCommands;
-import net.shard.seconddawnrp.progression.ShipPositionService;
-import net.shard.seconddawnrp.progression.SqlSlotQueueRepository;
+import net.shard.seconddawnrp.progression.*;
 import net.shard.seconddawnrp.registry.ModBlocks;
 import net.shard.seconddawnrp.registry.ModItems;
 import net.shard.seconddawnrp.registry.ModScreenHandlers;
@@ -114,6 +107,10 @@ import net.shard.seconddawnrp.tasksystem.terminal.TerminalInteractListener;
 import net.shard.seconddawnrp.terminal.TerminalDesignatorInteractListener;
 import net.shard.seconddawnrp.terminal.TerminalDesignatorRegistry;
 import net.shard.seconddawnrp.terminal.TerminalDesignatorService;
+import net.shard.seconddawnrp.transporter.AdminTransporterCommands;
+import net.shard.seconddawnrp.transporter.TransporterCommands;
+import net.shard.seconddawnrp.transporter.TransporterControllerNetworking;
+import net.shard.seconddawnrp.transporter.TransporterService;
 import net.shard.seconddawnrp.warpcore.command.WarpCoreCommands;
 import net.shard.seconddawnrp.warpcore.data.WarpCoreConfig;
 import net.shard.seconddawnrp.warpcore.network.WarpCoreNetworking;
@@ -161,6 +158,7 @@ public class SecondDawnRP implements ModInitializer {
 
 
 
+
     // ── Phase 5.25 ────────────────────────────────────────────────────────────
 
     public static TerminalDesignatorRegistry TERMINAL_DESIGNATOR_REGISTRY;
@@ -176,6 +174,7 @@ public class SecondDawnRP implements ModInitializer {
     public static CommendationService       COMMENDATION_SERVICE;
     public static ShipPositionService       SHIP_POSITION_SERVICE;
     public static GroupTaskService          GROUP_TASK_SERVICE;
+    public static ServiceRecordService SERVICE_RECORD_SERVICE;
     public static net.shard.seconddawnrp.roster.service.RosterService ROSTER_SERVICE;
 
     // ── Phase 8 — Medical ─────────────────────────────────────────────────────
@@ -183,6 +182,9 @@ public class SecondDawnRP implements ModInitializer {
     public static MedicalConditionRegistry MEDICAL_CONDITION_REGISTRY;
     public static MedicalService           MEDICAL_SERVICE;
     public static MedicalTerminalService   MEDICAL_TERMINAL_SERVICE;
+    public static LocationRegistry LOCATION_REGISTRY;
+    public static LocationService LOCATION_SERVICE;
+    public static TransporterService TRANSPORTER_SERVICE;
 
     // ── onInitialize ──────────────────────────────────────────────────────────
 
@@ -276,7 +278,9 @@ public class SecondDawnRP implements ModInitializer {
         } catch (Exception e) {
             throw new RuntimeException("Failed to initialize database infrastructure", e);
         }
-
+        ServiceRecordRepository serviceRecordRepository =
+                new ServiceRecordRepository(DATABASE_MANAGER);
+        SERVICE_RECORD_SERVICE = new ServiceRecordService(serviceRecordRepository);
         ProfileRepository profileRepository = new SqlProfileRepository(DATABASE_MANAGER);
 
         JsonTaskStateRepository jsonTaskStateRepository = new JsonTaskStateRepository(configDir);
@@ -506,7 +510,7 @@ public class SecondDawnRP implements ModInitializer {
         ROSTER_SERVICE = new net.shard.seconddawnrp.roster.service.RosterService(PROFILE_MANAGER);
         net.shard.seconddawnrp.roster.network.RosterNetworking.registerPayloads();
         net.shard.seconddawnrp.roster.network.RosterNetworking.registerServerReceivers();
-
+        COMMENDATION_SERVICE.setServiceRecordService(SERVICE_RECORD_SERVICE);
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 ProgressionCommands.register(dispatcher));
 
@@ -543,7 +547,21 @@ public class SecondDawnRP implements ModInitializer {
 
         DownedHooks.register();
 
-        // ── Tick loop ─────────────────────────────────────────────────────────
+        LOCATION_REGISTRY = new LocationRegistry();
+        LOCATION_REGISTRY.reload();
+
+        LOCATION_SERVICE = new LocationService(LOCATION_REGISTRY, DATABASE_MANAGER);
+
+        TRANSPORTER_SERVICE = new TransporterService(DATABASE_MANAGER, LOCATION_SERVICE);
+        TransporterControllerNetworking.registerPayloads();
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                GmLocationCommands.register(dispatcher, LOCATION_SERVICE));
+
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                AdminTransporterCommands.register(dispatcher, TRANSPORTER_SERVICE));
+
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                TransporterCommands.register(dispatcher, TRANSPORTER_SERVICE, PROFILE_MANAGER));// ── Tick loop ─────────────────────────────────────────────────────────
 
         ServerTickEvents.END_SERVER_TICK.register(server -> GM_EVENT_SERVICE.tick(server));
         ServerTickEvents.END_SERVER_TICK.register(server -> DEGRADATION_SERVICE.tick(server));
@@ -639,6 +657,15 @@ public class SecondDawnRP implements ModInitializer {
             MEDICAL_TERMINAL_SERVICE.reload();
             MEDICAL_SERVICE.setServer(server);
             DOWNED_SERVICE.setServer(server);
+
+            LOCATION_SERVICE.setServer(server);
+            LOCATION_SERVICE.loadFromDatabase();
+
+            TRANSPORTER_SERVICE.setServer(server);
+            TRANSPORTER_SERVICE.loadFromDatabase();
+
+            TransporterControllerNetworking.registerServerReceivers(
+                    TRANSPORTER_SERVICE, LOCATION_SERVICE);
         });
 
         // ── Player join / leave ───────────────────────────────────────────────
@@ -656,6 +683,9 @@ public class SecondDawnRP implements ModInitializer {
             if (profile != null) TASK_SERVICE.saveTaskState(profile);
             LONG_TERM_INJURY_SERVICE.onPlayerLeave(playerUuid);
             PROFILE_MANAGER.unloadProfile(playerUuid);
+            if (TRANSPORTER_SERVICE != null) {
+                TRANSPORTER_SERVICE.clearReady(handler.player.getUuid());
+            }
         });
 
         // ── SERVER_STOPPING ───────────────────────────────────────────────────

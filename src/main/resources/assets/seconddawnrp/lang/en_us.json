@@ -31,5 +31,6 @@
   "block.seconddawnrp.conduit":              "Conduit",
   "block.seconddawnrp.power_relay":          "Power Relay",
   "block.seconddawnrp.fuel_tank":            "Fuel Tank",
-  "block.seconddawnrp.submission_box":     "Submission Box"
+  "block.seconddawnrp.submission_box":     "Submission Box",
+  "block.seconddawnrp.transporter_controller":    "Transporter Controller"
 }

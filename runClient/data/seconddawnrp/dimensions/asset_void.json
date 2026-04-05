@@ -1,0 +1,10 @@
+{
+  "dimensionId": "asset_void",
+  "displayName": "Asset Void",
+  "description": "Flat void canvas for building ship assets and set pieces. Builder access only.",
+  "defaultEntryX": 0.5,
+  "defaultEntryY": 1.0,
+  "defaultEntryZ": 0.5,
+  "taskPoolIsolated": false,
+  "proximityRequired": false
+}
