@@ -51,6 +51,10 @@ public class SecondDawnRPClient implements ClientModInitializer {
         SubmissionClientHandler.register();
         AnomalyClientHandler.registerServerReceiver();
         EngineeringPadClientHandler.register();
+        HandledScreens.register(ModScreenHandlers.TACTICAL_SCREEN,
+                net.shard.seconddawnrp.tactical.console.TacticalScreen::new);
+
+        net.shard.seconddawnrp.tactical.client.TacticalClientHandler.registerClientReceivers();
 
         net.shard.seconddawnrp.medical.client.MedicalPadClientHandler.registerClientReceiver();
 

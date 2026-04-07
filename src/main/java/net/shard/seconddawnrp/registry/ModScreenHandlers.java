@@ -75,6 +75,14 @@ public class ModScreenHandlers {
                             (syncId, inv) -> new TransporterScreenHandler(syncId, inv),
                             FeatureFlags.VANILLA_FEATURES)
             );
+
+    public static final ScreenHandlerType<net.shard.seconddawnrp.tactical.console.TacticalScreenHandler>
+            TACTICAL_SCREEN = Registry.register(
+            Registries.SCREEN_HANDLER,
+            SecondDawnRP.id("tactical_console"),
+            new ScreenHandlerType<>(
+                    (syncId, inv) -> new net.shard.seconddawnrp.tactical.console.TacticalScreenHandler(syncId, inv),
+                    FeatureFlags.VANILLA_FEATURES));
     public static void register() {
         // no-op
     }

@@ -5,7 +5,6 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Formatting;
-import net.minecraft.util.math.BlockPos;
 import net.shard.seconddawnrp.SecondDawnRP;
 import net.shard.seconddawnrp.degradation.data.ComponentEntry;
 import net.shard.seconddawnrp.degradation.data.ComponentStatus;
@@ -15,21 +14,14 @@ import java.util.Optional;
 /**
  * Listens for block attacks (left-click) on registered components.
  *
- * <p>This is the foundation for Phase 5 weapons/combat damage. When a player
- * left-clicks a registered component, health is drained by
- * {@code combatDamagePerHit} from the degradation config. The block itself
- * is not broken — the event is cancelled after applying damage.
- *
- * <p>In Phase 5 this listener will be extended to respond to explosion events
- * and projectile impacts, driving component damage from ship combat.
- *
- * <p>Only players with {@code st.gm.use} can trigger combat damage directly
- * via left-click (for GM testing). In Phase 5, damage will come from
- * server-side explosion/projectile events instead and bypass this permission.
+ * Behavior:
+ * - If component health is above 0, left-click damages the component and cancels normal breaking.
+ * - If component health is already 0, this listener allows the click through so the
+ *   block-break listener can remove the block and mark it missing.
  */
 public class ComponentDamageListener {
 
-    /** Health drained per direct hit. Tunable — expose in DegradationConfig Phase 5. */
+    /** Health drained per direct hit. */
     private static final int DAMAGE_PER_HIT = 10;
 
     public void register() {
@@ -45,21 +37,41 @@ public class ComponentDamageListener {
 
             ComponentEntry entry = opt.get();
 
-            // Apply combat damage — bypasses the time-based drain interval
-            var updated = SecondDawnRP.DEGRADATION_SERVICE.applyDamage(worldKey, posLong, DAMAGE_PER_HIT);
-
-            // Notify the player who hit it — read health from updated entry
-            if (player instanceof ServerPlayerEntity sp) {
-                updated.ifPresent(e -> sp.sendMessage(
-                        Text.literal("Hit: ").formatted(Formatting.GRAY)
-                                .append(Text.literal(e.getDisplayName())
-                                        .formatted(Formatting.WHITE))
-                                .append(Text.literal(" — " + e.getHealth()
-                                        + "/100").formatted(healthColor(e.getStatus()))),
-                        true)); // action bar — not chat spam
+            // Missing block shouldn't be attack-processed here
+            if (entry.isMissingBlock()) {
+                return ActionResult.PASS;
             }
 
-            // Cancel to prevent block breaking
+            // IMPORTANT:
+            // If already at 0 health, allow normal block-breaking flow to continue.
+            // This lets ComponentBlockBreakListener handle actual destruction.
+            if (entry.getHealth() <= 0) {
+                return ActionResult.PASS;
+            }
+
+            var updated = SecondDawnRP.DEGRADATION_SERVICE.applyDamage(worldKey, posLong, DAMAGE_PER_HIT);
+
+            if (player instanceof ServerPlayerEntity sp) {
+                updated.ifPresent(e -> {
+                    sp.sendMessage(
+                            Text.literal("Hit: ").formatted(Formatting.GRAY)
+                                    .append(Text.literal(e.getDisplayName()).formatted(Formatting.WHITE))
+                                    .append(Text.literal(" — " + e.getHealth() + "/100")
+                                            .formatted(healthColor(e.getStatus()))),
+                            true
+                    );
+
+                    if (e.getHealth() <= 0) {
+                        sp.sendMessage(
+                                Text.literal(e.getDisplayName() + " is now non-functional. Break it to remove the dead component.")
+                                        .formatted(Formatting.DARK_RED),
+                                false
+                        );
+                    }
+                });
+            }
+
+            // Cancel normal breaking only while component still has health to lose.
             return ActionResult.FAIL;
         });
     }

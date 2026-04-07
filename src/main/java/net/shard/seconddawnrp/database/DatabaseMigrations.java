@@ -2,9 +2,11 @@ package net.shard.seconddawnrp.database;
 
 import java.sql.*;
 
+import static net.shard.seconddawnrp.tactical.data.TacticalMigration.applyVersion13;
+
 public final class DatabaseMigrations {
 
-    public static final int CURRENT_SCHEMA_VERSION = 12;
+    public static final int CURRENT_SCHEMA_VERSION = 14;
 
     public void migrate(Connection connection) throws SQLException {
         createSchemaVersionTableIfMissing(connection);
@@ -20,7 +22,9 @@ public final class DatabaseMigrations {
         if (v < 9)  { applyVersion9(connection);  setSchemaVersion(connection, 9);  v = 9;  }
         if (v < 10) { applyVersion10(connection); setSchemaVersion(connection, 10); v = 10; }
         if (v < 11) { applyVersion11(connection); setSchemaVersion(connection, 11); v = 11; }
-        if (v < 12) { applyVersion11(connection); setSchemaVersion(connection, 12); v = 12; }
+        if (v < 12) { applyVersion12(connection); setSchemaVersion(connection, 12); v = 12; }
+        if (v < 13) { applyVersion13(connection); setSchemaVersion(connection, 13); v = 13; }
+        if (v < 14) { applyVersion14(connection); setSchemaVersion(connection, 14); v = 14; }
         if (v > CURRENT_SCHEMA_VERSION)
             throw new SQLException("DB schema " + v + " newer than supported " + CURRENT_SCHEMA_VERSION);
     }
@@ -135,7 +139,8 @@ public final class DatabaseMigrations {
                     + "last_task_generated_ms INTEGER NOT NULL, "
                     + "registered_by_uuid TEXT, "
                     + "repair_item_id TEXT, "
-                    + "repair_item_count INTEGER NOT NULL DEFAULT 0)");
+                    + "repair_item_count INTEGER NOT NULL DEFAULT 0, "
+                    + "missing_block INTEGER NOT NULL DEFAULT 0)");
             s.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_components_position "
                     + "ON components (world_key, block_pos_long)");
         }
@@ -352,5 +357,8 @@ public final class DatabaseMigrations {
                 throw e;
             }
         }
+    }
+    private void applyVersion14(Connection c) throws SQLException {
+        execSafe(c, "ALTER TABLE components ADD COLUMN missing_block INTEGER NOT NULL DEFAULT 0");
     }
 }

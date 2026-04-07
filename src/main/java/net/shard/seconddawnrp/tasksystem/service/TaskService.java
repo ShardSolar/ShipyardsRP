@@ -735,4 +735,37 @@ public class TaskService {
         return true;
     }
 
+    public boolean hasActiveTaskForTarget(String targetId) {
+        if (targetId == null || targetId.isBlank()) {
+            return false;
+        }
+
+        return poolEntries.stream()
+                .filter(entry -> entry.getTargetId() != null)
+                .filter(entry -> targetId.equals(entry.getTargetId()))
+                .anyMatch(entry ->
+                        entry.getStatus() != OpsTaskStatus.COMPLETED
+                                && entry.getStatus() != OpsTaskStatus.CANCELED
+                                && entry.getStatus() != OpsTaskStatus.FAILED
+                                && entry.getStatus() != OpsTaskStatus.ARCHIVED);
+    }
+
+    public int countActiveTasksMatching(String text) {
+        if (text == null || text.isBlank()) {
+            return 0;
+        }
+
+        return (int) poolEntries.stream()
+                .filter(entry ->
+                        entry.getStatus() != OpsTaskStatus.COMPLETED
+                                && entry.getStatus() != OpsTaskStatus.CANCELED
+                                && entry.getStatus() != OpsTaskStatus.FAILED
+                                && entry.getStatus() != OpsTaskStatus.ARCHIVED)
+                .filter(entry ->
+                        (entry.getDescription() != null && entry.getDescription().contains(text))
+                                || (entry.getDisplayName() != null && entry.getDisplayName().contains(text))
+                                || (entry.getTargetId() != null && entry.getTargetId().contains(text)))
+                .count();
+    }
+
 }

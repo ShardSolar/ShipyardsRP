@@ -1,13 +1,9 @@
 package net.shard.seconddawnrp.degradation.event;
 
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
-import net.minecraft.util.math.BlockPos;
 import net.shard.seconddawnrp.SecondDawnRP;
 import net.shard.seconddawnrp.degradation.data.ComponentEntry;
 
@@ -16,50 +12,80 @@ import java.util.Optional;
 /**
  * Handles block breaking for registered components.
  *
- * <p>Survival/adventure mode: block breaking is cancelled — registered
- * components are indestructible until explicitly unregistered via the
- * Component Registration Tool. The player gets a red warning message.
- *
- * <p>Creative mode: block breaks normally and the component is
- * automatically unregistered so no orphaned data remains.
+ * Behavior:
+ * - Health > 0  -> protected, cannot break
+ * - Health <= 0 -> break is forced, then component is marked missing
+ * - Creative    -> unregister and allow/admin-remove
  */
 public class ComponentBlockBreakListener {
 
     public void register() {
-        PlayerBlockBreakEvents.BEFORE.register(
-                (world, player, pos, state, blockEntity) -> {
-                    if (world.isClient()) return true;
+        PlayerBlockBreakEvents.BEFORE.register((world, player, pos, state, blockEntity) -> {
+            if (world.isClient()) return true;
 
-                    String worldKey = world.getRegistryKey().getValue().toString();
-                    long posLong = pos.asLong();
+            String worldKey = world.getRegistryKey().getValue().toString();
+            long posLong = pos.asLong();
 
-                    Optional<ComponentEntry> opt =
-                            SecondDawnRP.DEGRADATION_SERVICE.getByPosition(worldKey, posLong);
-                    if (opt.isEmpty()) return true; // not a component — allow break
+            Optional<ComponentEntry> opt =
+                    SecondDawnRP.DEGRADATION_SERVICE.getByPosition(worldKey, posLong);
 
-                    if (player instanceof ServerPlayerEntity sp && sp.isCreative()) {
-                        // Creative — auto-unregister and allow the break
-                        String name = opt.get().getDisplayName();
-                        SecondDawnRP.DEGRADATION_SERVICE.unregister(worldKey, posLong);
-                        sp.sendMessage(
-                                Text.literal("Component '").formatted(Formatting.YELLOW)
-                                        .append(Text.literal(name).formatted(Formatting.WHITE))
-                                        .append(Text.literal("' auto-unregistered.")
-                                                .formatted(Formatting.YELLOW)),
-                                false);
-                        return true; // allow break
-                    }
+            if (opt.isEmpty()) {
+                return true;
+            }
 
-                    // Survival/adventure — block is protected
-                    if (player instanceof ServerPlayerEntity sp) {
-                        sp.sendMessage(
-                                Text.literal("Cannot break a registered component. ")
-                                        .formatted(Formatting.RED)
-                                        .append(Text.literal("Unregister it first with the Component Registration Tool.")
-                                                .formatted(Formatting.DARK_RED)),
-                                false);
-                    }
-                    return false; // cancel break
-                });
+            ComponentEntry entry = opt.get();
+
+            // Creative: remove registration and let admin break normally
+            if (player instanceof ServerPlayerEntity sp && sp.isCreative()) {
+                SecondDawnRP.DEGRADATION_SERVICE.unregister(worldKey, posLong);
+                sp.sendMessage(
+                        Text.literal("Component removed: ")
+                                .formatted(Formatting.YELLOW)
+                                .append(Text.literal(entry.getDisplayName()).formatted(Formatting.WHITE)),
+                        false
+                );
+                return true;
+            }
+
+            // Still has integrity left: do not allow break
+            if (entry.getHealth() > 0) {
+                if (player instanceof ServerPlayerEntity sp) {
+                    sp.sendMessage(
+                            Text.literal("Component integrity holding (" + entry.getHealth() + "/100). ")
+                                    .formatted(Formatting.RED)
+                                    .append(Text.literal("Repair or destroy it to 0 before removal.")
+                                            .formatted(Formatting.DARK_RED)),
+                            true
+                    );
+                }
+                return false;
+            }
+
+            // Health is 0: force the break now, then mark missing
+            boolean broken = world.breakBlock(pos, false, player);
+
+            if (broken) {
+                SecondDawnRP.DEGRADATION_SERVICE.markBlockMissing(worldKey, posLong);
+
+                if (player instanceof ServerPlayerEntity sp) {
+                    sp.sendMessage(
+                            Text.literal("[Engineering] ")
+                                    .formatted(Formatting.RED)
+                                    .append(Text.literal("Component destroyed: ").formatted(Formatting.DARK_RED))
+                                    .append(Text.literal(entry.getDisplayName()).formatted(Formatting.WHITE)),
+                            false
+                    );
+                }
+            } else if (player instanceof ServerPlayerEntity sp) {
+                sp.sendMessage(
+                        Text.literal("Component reached 0 health, but the block could not be removed.")
+                                .formatted(Formatting.RED),
+                        false
+                );
+            }
+
+            // Cancel vanilla handling because we already handled it ourselves
+            return false;
+        });
     }
 }

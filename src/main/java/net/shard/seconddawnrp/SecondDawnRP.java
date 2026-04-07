@@ -185,6 +185,8 @@ public class SecondDawnRP implements ModInitializer {
     public static LocationRegistry LOCATION_REGISTRY;
     public static LocationService LOCATION_SERVICE;
     public static TransporterService TRANSPORTER_SERVICE;
+    public static net.shard.seconddawnrp.tactical.service.TacticalService TACTICAL_SERVICE;
+    public static net.shard.seconddawnrp.tactical.service.EncounterService ENCOUNTER_SERVICE;
 
     // ── onInitialize ──────────────────────────────────────────────────────────
 
@@ -282,7 +284,22 @@ public class SecondDawnRP implements ModInitializer {
                 new ServiceRecordRepository(DATABASE_MANAGER);
         SERVICE_RECORD_SERVICE = new ServiceRecordService(serviceRecordRepository);
         ProfileRepository profileRepository = new SqlProfileRepository(DATABASE_MANAGER);
+        try {
+            net.shard.seconddawnrp.tactical.data.TacticalMigration
+                    .applyVersion13(DATABASE_MANAGER.getConnection()); // V13
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException("Failed to apply V13 tactical migration", e);
+        }
+        net.shard.seconddawnrp.tactical.data.ShipClassDefinition
+                .loadAll(Path.of("data")); // loads data/seconddawnrp/ships/*.json
 
+        net.shard.seconddawnrp.tactical.data.TacticalRepository tacticalRepository =
+                new net.shard.seconddawnrp.tactical.data.TacticalRepository(DATABASE_MANAGER);
+
+        ENCOUNTER_SERVICE = new net.shard.seconddawnrp.tactical.service.EncounterService(tacticalRepository);
+        TACTICAL_SERVICE  = new net.shard.seconddawnrp.tactical.service.TacticalService(ENCOUNTER_SERVICE);
+
+        net.shard.seconddawnrp.tactical.network.TacticalNetworking.registerPayloads();
         JsonTaskStateRepository jsonTaskStateRepository = new JsonTaskStateRepository(configDir);
         try { jsonTaskStateRepository.init(); }
         catch (Exception e) { throw new RuntimeException("Failed to initialize JSON task state backup", e); }
@@ -311,7 +328,8 @@ public class SecondDawnRP implements ModInitializer {
                 PlayerProfileCommands.register(dispatcher));
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 TaskCommands.register(dispatcher, PROFILE_MANAGER, TASK_SERVICE));
-
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                net.shard.seconddawnrp.tactical.command.TacticalCommands.register(dispatcher, TACTICAL_SERVICE));
         JsonTaskTerminalRepository jsonTaskTerminalRepository = new JsonTaskTerminalRepository(configDir);
         try { jsonTaskTerminalRepository.init(); }
         catch (Exception e) { throw new RuntimeException("Failed to initialize JSON terminal backup", e); }
@@ -359,6 +377,7 @@ public class SecondDawnRP implements ModInitializer {
         new ComponentDamageListener().register();
         new ComponentBlockBreakListener().register();
         ComponentInteractionBlocker.register();
+        net.shard.seconddawnrp.tactical.damage.ZoneRepairListener.register();
 
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 EngineeringCommands.register(dispatcher, registryAccess, environment));
@@ -581,8 +600,11 @@ public class SecondDawnRP implements ModInitializer {
                 GM_TOOL_VISIBILITY_SERVICE.onEquip(player, player.getMainHandStack());
                 TERMINAL_DESIGNATOR_SERVICE.tickGlowForPlayer(player);
                 TERMINAL_DESIGNATOR_SERVICE.tickActionBarPrompt(player);
+
             }
         });
+        ServerTickEvents.END_SERVER_TICK.register(server ->
+                TACTICAL_SERVICE.tick(server, server.getTicks()));
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             if (server.getTicks() % 1_728_000 == 0 && server.getTicks() > 0) {
                 RP_PADD_SUBMISSION_SERVICE.cleanup();
@@ -634,6 +656,10 @@ public class SecondDawnRP implements ModInitializer {
             rollModifierConfig.load();
             ROLL_SERVICE.setServer(server);
             RP_PADD_SUBMISSION_SERVICE.setServer(server);
+            ENCOUNTER_SERVICE.setServer(server);
+            TACTICAL_SERVICE.setServer(server);
+            ENCOUNTER_SERVICE.loadFromDatabase();
+            net.shard.seconddawnrp.tactical.network.TacticalNetworking.registerServerReceivers();
 
             // Phase 5.25
             TERMINAL_DESIGNATOR_REGISTRY.reload();

@@ -43,7 +43,8 @@ public record OpenEngineeringPadS2CPacket(
             int health,
             ComponentStatus status,
             String repairItemId,
-            int repairItemCount
+            int repairItemCount,
+            boolean missingBlock
     ) {}
 
     /** Lightweight view of a warp core for Engineering Pad display. */
@@ -70,6 +71,7 @@ public record OpenEngineeringPadS2CPacket(
                         buf.writeString(value.status().name());
                         buf.writeString(value.repairItemId() != null ? value.repairItemId() : "");
                         buf.writeInt(value.repairItemCount());
+                        buf.writeBoolean(value.missingBlock());
                     },
                     buf -> new ComponentSnapshot(
                             buf.readString(),
@@ -79,7 +81,8 @@ public record OpenEngineeringPadS2CPacket(
                             buf.readInt(),
                             ComponentStatus.valueOf(buf.readString()),
                             buf.readString(),
-                            buf.readInt()
+                            buf.readInt(),
+                            buf.readBoolean()
                     )
             );
 
@@ -166,7 +169,8 @@ public record OpenEngineeringPadS2CPacket(
                     entry.getHealth(),
                     entry.getStatus(),
                     repairId,
-                    repairCount
+                    repairCount,
+                    entry.isMissingBlock()
             ));
         }
         snapshots.sort(Comparator

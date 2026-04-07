@@ -1,5 +1,8 @@
 package net.shard.seconddawnrp.warpcore.data;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -8,13 +11,12 @@ import java.util.UUID;
  * <p>Multiple warp cores are supported. Each is identified by a unique
  * {@code entryId} generated at registration time.
  *
- * <p>TREnergy (Tech Reborn / Energized Power) is read from the controller
- * block's own faces — cables connect directly to the controller. No remote
- * source position is stored.
+ * <p>TREnergy is read from the controller block's own faces — cables connect
+ * directly to the controller. No remote source position is stored.
  */
 public class WarpCoreEntry {
 
-    private final String entryId;       // unique identifier, e.g. "wc_3fc4_69d1"
+    private final String entryId;
     private final String worldKey;
     private final long blockPosLong;
 
@@ -25,7 +27,7 @@ public class WarpCoreEntry {
     private long lastFuelDrainMs;
     private long lastFaultTaskMs;
     private int currentPowerOutput;
-    private final java.util.List<String> resonanceCoilIds;
+    private final List<String> resonanceCoilIds;
     private UUID registeredByUuid;
 
     public WarpCoreEntry(
@@ -37,42 +39,120 @@ public class WarpCoreEntry {
             long lastFuelDrainMs,
             long lastFaultTaskMs,
             int currentPowerOutput,
-            java.util.List<String> resonanceCoilIds,
-            UUID registeredByUuid) {
+            List<String> resonanceCoilIds,
+            UUID registeredByUuid
+    ) {
         this.entryId = entryId;
         this.worldKey = worldKey;
         this.blockPosLong = blockPosLong;
         this.state = state;
-        this.fuelRods = fuelRods;
+        this.fuelRods = Math.max(0, fuelRods);
         this.startupTicksRemaining = 0;
         this.shutdownTicksRemaining = 0;
         this.lastFuelDrainMs = lastFuelDrainMs;
         this.lastFaultTaskMs = lastFaultTaskMs;
-        this.currentPowerOutput = currentPowerOutput;
-        this.resonanceCoilIds = resonanceCoilIds != null ? new java.util.ArrayList<>(resonanceCoilIds) : new java.util.ArrayList<>();
+        this.currentPowerOutput = Math.max(0, Math.min(100, currentPowerOutput));
+        this.resonanceCoilIds = resonanceCoilIds != null
+                ? new ArrayList<>(resonanceCoilIds)
+                : new ArrayList<>();
         this.registeredByUuid = registeredByUuid;
     }
 
-    public void setState(ReactorState s)                { this.state = s; }
-    public void setFuelRods(int n)                      { this.fuelRods = Math.max(0, n); }
-    public void setStartupTicksRemaining(int t)         { this.startupTicksRemaining = Math.max(0, t); }
-    public void setShutdownTicksRemaining(int t)        { this.shutdownTicksRemaining = Math.max(0, t); }
-    public void setLastFuelDrainMs(long ms)             { this.lastFuelDrainMs = ms; }
-    public void setLastFaultTaskMs(long ms)             { this.lastFaultTaskMs = ms; }
-    public void setCurrentPowerOutput(int p)            { this.currentPowerOutput = Math.max(0, Math.min(100, p)); }
-    public void addResonanceCoil(String id) { if (!resonanceCoilIds.contains(id)) resonanceCoilIds.add(id); }
-    public void removeResonanceCoil(String id) { resonanceCoilIds.remove(id); }
+    // ── Mutators ─────────────────────────────────────────────────────────────
 
-    public String getEntryId()                  { return entryId; }
-    public String getWorldKey()                 { return worldKey; }
-    public long getBlockPosLong()               { return blockPosLong; }
-    public ReactorState getState()              { return state; }
-    public int getFuelRods()                    { return fuelRods; }
-    public int getStartupTicksRemaining()       { return startupTicksRemaining; }
-    public int getShutdownTicksRemaining()      { return shutdownTicksRemaining; }
-    public long getLastFuelDrainMs()            { return lastFuelDrainMs; }
-    public long getLastFaultTaskMs()            { return lastFaultTaskMs; }
-    public int getCurrentPowerOutput()          { return currentPowerOutput; }
-    public java.util.List<String> getResonanceCoilIds() { return java.util.Collections.unmodifiableList(resonanceCoilIds); }
-    public UUID getRegisteredByUuid()           { return registeredByUuid; }
+    public void setState(ReactorState state) {
+        this.state = state;
+    }
+
+    public void setFuelRods(int fuelRods) {
+        this.fuelRods = Math.max(0, fuelRods);
+    }
+
+    public void setStartupTicksRemaining(int startupTicksRemaining) {
+        this.startupTicksRemaining = Math.max(0, startupTicksRemaining);
+    }
+
+    public void setShutdownTicksRemaining(int shutdownTicksRemaining) {
+        this.shutdownTicksRemaining = Math.max(0, shutdownTicksRemaining);
+    }
+
+    public void setLastFuelDrainMs(long lastFuelDrainMs) {
+        this.lastFuelDrainMs = lastFuelDrainMs;
+    }
+
+    public void setLastFaultTaskMs(long lastFaultTaskMs) {
+        this.lastFaultTaskMs = lastFaultTaskMs;
+    }
+
+    public void setCurrentPowerOutput(int currentPowerOutput) {
+        this.currentPowerOutput = Math.max(0, Math.min(100, currentPowerOutput));
+    }
+
+    public void setRegisteredByUuid(UUID registeredByUuid) {
+        this.registeredByUuid = registeredByUuid;
+    }
+
+    public void addResonanceCoil(String componentId) {
+        if (componentId != null && !componentId.isBlank() && !resonanceCoilIds.contains(componentId)) {
+            resonanceCoilIds.add(componentId);
+        }
+    }
+
+    public void removeResonanceCoil(String componentId) {
+        resonanceCoilIds.remove(componentId);
+    }
+
+    public void clearResonanceCoils() {
+        resonanceCoilIds.clear();
+    }
+
+    // ── Accessors ────────────────────────────────────────────────────────────
+
+    public String getEntryId() {
+        return entryId;
+    }
+
+    public String getWorldKey() {
+        return worldKey;
+    }
+
+    public long getBlockPosLong() {
+        return blockPosLong;
+    }
+
+    public ReactorState getState() {
+        return state;
+    }
+
+    public int getFuelRods() {
+        return fuelRods;
+    }
+
+    public int getStartupTicksRemaining() {
+        return startupTicksRemaining;
+    }
+
+    public int getShutdownTicksRemaining() {
+        return shutdownTicksRemaining;
+    }
+
+    public long getLastFuelDrainMs() {
+        return lastFuelDrainMs;
+    }
+
+    public long getLastFaultTaskMs() {
+        return lastFaultTaskMs;
+    }
+
+    public int getCurrentPowerOutput() {
+        return currentPowerOutput;
+    }
+
+    public List<String> getResonanceCoilIds() {
+        return Collections.unmodifiableList(resonanceCoilIds);
+    }
+
+    public UUID getRegisteredByUuid() {
+        return registeredByUuid;
+    }
 }

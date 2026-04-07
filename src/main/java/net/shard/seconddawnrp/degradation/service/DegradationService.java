@@ -1,5 +1,6 @@
 package net.shard.seconddawnrp.degradation.service;
 
+import net.minecraft.block.BlockState;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
@@ -14,6 +15,7 @@ import net.shard.seconddawnrp.division.Division;
 import net.shard.seconddawnrp.tasksystem.data.TaskObjectiveType;
 import net.shard.seconddawnrp.tasksystem.service.TaskService;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -21,6 +23,10 @@ import java.util.Optional;
 import java.util.UUID;
 
 public class DegradationService {
+
+    private static final int MAX_HEALTH = 100;
+    private static final int MAX_ACTIVE_AUTO_REPAIR_TASKS = 6;
+    private static final int OFFLINE_RECOVERY_HEALTH = 30;
 
     private final ComponentRepository repository;
     private final TaskService taskService;
@@ -37,7 +43,8 @@ public class DegradationService {
     public DegradationService(
             ComponentRepository repository,
             TaskService taskService,
-            DegradationConfig config) {
+            DegradationConfig config
+    ) {
         this.repository = repository;
         this.taskService = taskService;
         this.config = config;
@@ -52,13 +59,16 @@ public class DegradationService {
     public void reload() {
         cache.clear();
         for (ComponentEntry entry : repository.loadAll()) {
+            normalizeEntry(entry);
             cache.put(entry.getComponentId(), entry);
         }
-        System.out.println("[SecondDawnRP] Degradation system loaded "
-                + cache.size() + " components.");
+        System.out.println("[SecondDawnRP] Degradation system loaded " + cache.size() + " components.");
     }
 
     public void saveAll() {
+        for (ComponentEntry entry : cache.values()) {
+            normalizeEntry(entry);
+        }
         repository.saveAll(cache.values());
     }
 
@@ -66,21 +76,54 @@ public class DegradationService {
 
     public void tick(MinecraftServer server) {
         long now = System.currentTimeMillis();
-        for (ComponentEntry entry : new java.util.ArrayList<>(cache.values())) {
+
+        for (ComponentEntry entry : new ArrayList<>(cache.values())) {
+            refreshMissingState(entry, false, now);
             tickDrain(entry, now);
             tickWarningPulse(entry);
         }
+
         integrityChecker.tick(server);
     }
 
     private void tickDrain(ComponentEntry entry, long now) {
+        if (entry.isMissingBlock()) {
+            if (entry.getHealth() != 0 || entry.getStatus() != ComponentStatus.OFFLINE) {
+                entry.setHealth(0);
+                entry.setMissingBlock(true);
+                normalizeEntry(entry);
+                repository.save(entry);
+            }
+            return;
+        }
+
+        if (entry.getStatus() == ComponentStatus.OFFLINE || entry.getHealth() <= 0) {
+            if (entry.getHealth() != 0 || entry.getStatus() != ComponentStatus.OFFLINE) {
+                ComponentStatus previousStatus = entry.getStatus();
+                entry.setHealth(0);
+                normalizeEntry(entry);
+
+                if (previousStatus != ComponentStatus.OFFLINE) {
+                    ensureRepairTaskForComponent(entry, now, false);
+                    onComponentOffline(entry, false);
+                    notifyBlockStateChanged(entry);
+                }
+
+                repository.save(entry);
+            }
+            return;
+        }
+
         long elapsed = now - entry.getLastDrainTickMs();
-        if (elapsed < config.getDrainIntervalMs()) return;
+        if (elapsed < config.getDrainIntervalMs()) {
+            return;
+        }
 
         int baseDrain = switch (entry.getStatus()) {
             case NOMINAL -> config.getDrainPerTickNominal();
             case DEGRADED -> config.getDrainPerTickDegraded();
-            case CRITICAL, OFFLINE -> config.getDrainPerTickCritical();
+            case CRITICAL -> config.getDrainPerTickCritical();
+            case OFFLINE -> 0;
         };
 
         int drain = reactorCritical
@@ -91,17 +134,17 @@ public class DegradationService {
 
         entry.setHealth(entry.getHealth() - drain);
         entry.setLastDrainTickMs(now);
+        normalizeEntry(entry);
 
-        // CRITICAL transition — generate repair task
         if (previousStatus != ComponentStatus.CRITICAL
                 && entry.getStatus() == ComponentStatus.CRITICAL) {
-            maybeGenerateRepairTask(entry, now);
+            ensureRepairTaskForComponent(entry, now, false);
         }
 
-        // OFFLINE transition — broadcast alert
         if (previousStatus != ComponentStatus.OFFLINE
                 && entry.getStatus() == ComponentStatus.OFFLINE) {
-            onComponentOffline(entry);
+            ensureRepairTaskForComponent(entry, now, false);
+            onComponentOffline(entry, false);
         }
 
         if (previousStatus != entry.getStatus()) {
@@ -122,7 +165,7 @@ public class DegradationService {
         int pulseTicks = switch (entry.getStatus()) {
             case DEGRADED -> config.getWarningPulseTicksDegraded();
             case CRITICAL, OFFLINE -> config.getWarningPulseTicksCritical();
-            default -> Integer.MAX_VALUE;
+            case NOMINAL -> Integer.MAX_VALUE;
         };
 
         int counter = pulseCounters.getOrDefault(entry.getComponentId(), 0) + 1;
@@ -148,42 +191,140 @@ public class DegradationService {
                 entry.getHealth()
         );
 
-        double r = config.getWarningRadiusBlocks();
+        double radius = config.getWarningRadiusBlocks();
         world.getPlayers().stream()
-                .filter(p -> p.getBlockPos().isWithinDistance(pos, r))
+                .filter(p -> p.getBlockPos().isWithinDistance(pos, radius))
                 .forEach(p -> net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(p, packet));
+    }
+
+    // ── Missing Block Handling ────────────────────────────────────────────────
+
+    /**
+     * Call this when a registered block is physically broken.
+     * The component remains registered, but is marked missing and forced OFFLINE.
+     */
+    public Optional<ComponentEntry> markBlockMissing(String worldKey, long blockPosLong) {
+        return markBlockMissing(worldKey, blockPosLong, System.currentTimeMillis());
+    }
+
+    public Optional<ComponentEntry> markBlockMissing(String worldKey, long blockPosLong, long now) {
+        Optional<ComponentEntry> opt = getByPosition(worldKey, blockPosLong);
+        if (opt.isEmpty()) return Optional.empty();
+
+        ComponentEntry entry = opt.get();
+        boolean alreadyMissing = entry.isMissingBlock();
+
+        entry.setMissingBlock(true);
+        entry.setHealth(0);
+        normalizeEntry(entry);
+
+        if (!alreadyMissing) {
+            ensureRepairTaskForComponent(entry, now, true);
+            onComponentOffline(entry, true);
+            notifyBlockStateChanged(entry);
+            repository.save(entry);
+        }
+
+        return Optional.of(entry);
+    }
+
+    /**
+     * Checks the actual world block and updates missing state.
+     * If restoreHealthOnReturn is true, replacing the block can bring the component back online.
+     */
+    public void refreshMissingState(ComponentEntry entry, boolean restoreHealthOnReturn, long now) {
+        ServerWorld world = resolveWorld(entry.getWorldKey());
+        if (world == null) return;
+
+        BlockPos pos = BlockPos.fromLong(entry.getBlockPosLong());
+        BlockState state = world.getBlockState(pos);
+
+        boolean blockMissingNow = state.isAir();
+
+        if (blockMissingNow && !entry.isMissingBlock()) {
+            entry.setMissingBlock(true);
+            entry.setHealth(0);
+            normalizeEntry(entry);
+            ensureRepairTaskForComponent(entry, now, true);
+            onComponentOffline(entry, true);
+            notifyBlockStateChanged(entry);
+            repository.save(entry);
+            return;
+        }
+
+        if (!blockMissingNow && entry.isMissingBlock()) {
+            entry.setMissingBlock(false);
+
+            if (restoreHealthOnReturn) {
+                entry.setHealth(Math.max(OFFLINE_RECOVERY_HEALTH, config.getHealthPerRepair()));
+            } else {
+                entry.setHealth(Math.max(entry.getHealth(), 1));
+            }
+
+            normalizeEntry(entry);
+            notifyBlockStateChanged(entry);
+            repository.save(entry);
+        }
     }
 
     // ── Task Auto-Generation ──────────────────────────────────────────────────
 
-    private void maybeGenerateRepairTask(ComponentEntry entry, long now) {
+    private void ensureRepairTaskForComponent(ComponentEntry entry, long now, boolean missingBlock) {
         long cooldown = config.getTaskGenerationCooldownMs();
-        if (now - entry.getLastTaskGeneratedMs() < cooldown) return;
+        if (now - entry.getLastTaskGeneratedMs() < cooldown) {
+            return;
+        }
 
-        String displayName = "Repair: " + entry.getDisplayName();
+        if (taskService.hasActiveTaskForTarget(entry.getComponentId())) {
+            return;
+        }
+
+        if (taskService.countActiveTasksMatching("[autoRepair:true]") >= MAX_ACTIVE_AUTO_REPAIR_TASKS) {
+            System.out.println("[SecondDawnRP] Auto-repair task cap reached; skipping task for component '"
+                    + entry.getComponentId() + "'.");
+            return;
+        }
+
+        String displayName = missingBlock
+                ? "Replace Missing Component: " + entry.getDisplayName()
+                : "Repair: " + entry.getDisplayName();
+
         String description = "Component " + entry.getDisplayName()
-                + " has reached CRITICAL status (health: " + entry.getHealth() + "/100)."
-                + " Locate and repair the component at position "
+                + (missingBlock
+                ? " is MISSING from its registered position."
+                : " is in " + entry.getStatus().name() + " status (health: " + entry.getHealth() + "/100).")
+                + " Locate and restore the component at position "
                 + positionLabel(entry.getBlockPosLong())
                 + " in world '" + entry.getWorldKey() + "'."
-                + " [componentId:" + entry.getComponentId() + "]";
+                + " [componentId:" + entry.getComponentId() + "]"
+                + " [autoRepair:true]"
+                + (missingBlock ? " [missingBlock:true]" : "");
 
         taskService.createPoolTask(
-                generateTaskId(displayName),
+                generateTaskId(entry),
                 displayName,
                 description,
                 Division.ENGINEERING,
                 TaskObjectiveType.MANUAL_CONFIRM,
                 entry.getComponentId(),
                 1,
-                50,
+                missingBlock ? 25 : (entry.getStatus() == ComponentStatus.OFFLINE ? 20 : 15),
                 true,
                 null
         );
 
         entry.setLastTaskGeneratedMs(now);
-        System.out.println("[SecondDawnRP] Auto-generated repair task for component '"
-                + entry.getComponentId() + "'.");
+        repository.save(entry);
+
+        System.out.println("[SecondDawnRP] Auto-generated repair task for component '" + entry.getComponentId() + "'.");
+    }
+
+    private String generateTaskId(ComponentEntry entry) {
+        String base = ("repair_" + entry.getComponentId()).toLowerCase()
+                .replaceAll("[^a-z0-9_]+", "_")
+                .replaceAll("_+", "_")
+                .replaceAll("^_|_$", "");
+        return base;
     }
 
     // ── Registration ──────────────────────────────────────────────────────────
@@ -193,7 +334,8 @@ public class DegradationService {
             long blockPosLong,
             String blockTypeId,
             String displayName,
-            UUID registeredBy) {
+            UUID registeredBy
+    ) {
         boolean alreadyExists = cache.values().stream()
                 .anyMatch(e -> e.getWorldKey().equals(worldKey)
                         && e.getBlockPosLong() == blockPosLong);
@@ -217,8 +359,11 @@ public class DegradationService {
                 0L,
                 registeredBy,
                 null,
-                0
+                0,
+                false
         );
+
+        normalizeEntry(entry);
 
         cache.put(id, entry);
         repository.save(entry);
@@ -242,17 +387,24 @@ public class DegradationService {
     // ── Repair ────────────────────────────────────────────────────────────────
 
     public Optional<ComponentEntry> applyRepair(String worldKey, long blockPosLong) {
-        Optional<ComponentEntry> opt = cache.values().stream()
-                .filter(e -> e.getWorldKey().equals(worldKey)
-                        && e.getBlockPosLong() == blockPosLong)
-                .findFirst();
-
+        Optional<ComponentEntry> opt = getByPosition(worldKey, blockPosLong);
         if (opt.isEmpty()) return Optional.empty();
 
         ComponentEntry entry = opt.get();
         ComponentStatus previousStatus = entry.getStatus();
 
-        entry.setHealth(entry.getHealth() + config.getHealthPerRepair());
+        if (entry.isMissingBlock()) {
+            // Can't repair a physically missing block with a normal repair action.
+            return Optional.of(entry);
+        }
+
+        if (previousStatus == ComponentStatus.OFFLINE || entry.getHealth() <= 0) {
+            entry.setHealth(Math.max(OFFLINE_RECOVERY_HEALTH, config.getHealthPerRepair()));
+        } else {
+            entry.setHealth(entry.getHealth() + config.getHealthPerRepair());
+        }
+
+        normalizeEntry(entry);
 
         if (previousStatus != entry.getStatus()) {
             notifyBlockStateChanged(entry);
@@ -262,31 +414,31 @@ public class DegradationService {
         return Optional.of(entry);
     }
 
-    /**
-     * Apply direct combat damage to a component, bypassing the normal timed drain interval.
-     */
     public Optional<ComponentEntry> applyDamage(String worldKey, long blockPosLong, int amount) {
-        Optional<ComponentEntry> opt = cache.values().stream()
-                .filter(e -> e.getWorldKey().equals(worldKey)
-                        && e.getBlockPosLong() == blockPosLong)
-                .findFirst();
-
+        Optional<ComponentEntry> opt = getByPosition(worldKey, blockPosLong);
         if (opt.isEmpty()) return Optional.empty();
 
         ComponentEntry entry = opt.get();
-        ComponentStatus previousStatus = entry.getStatus();
 
+        if (entry.isMissingBlock()) {
+            return Optional.of(entry);
+        }
+
+        ComponentStatus previousStatus = entry.getStatus();
         entry.setHealth(entry.getHealth() - amount);
 
         long now = System.currentTimeMillis();
+        normalizeEntry(entry);
+
         if (previousStatus != ComponentStatus.CRITICAL
                 && entry.getStatus() == ComponentStatus.CRITICAL) {
-            maybeGenerateRepairTask(entry, now);
+            ensureRepairTaskForComponent(entry, now, false);
         }
 
         if (previousStatus != ComponentStatus.OFFLINE
                 && entry.getStatus() == ComponentStatus.OFFLINE) {
-            onComponentOffline(entry);
+            ensureRepairTaskForComponent(entry, now, false);
+            onComponentOffline(entry, false);
         }
 
         if (previousStatus != entry.getStatus()) {
@@ -315,6 +467,7 @@ public class DegradationService {
     }
 
     public void forceSave(ComponentEntry entry) {
+        normalizeEntry(entry);
         cache.put(entry.getComponentId(), entry);
         repository.save(entry);
     }
@@ -323,9 +476,6 @@ public class DegradationService {
         return config;
     }
 
-    /**
-     * While reactor is critical, degradation drain rate is multiplied.
-     */
     public void setReactorCritical(boolean critical, double multiplier) {
         this.reactorCritical = critical;
         this.reactorDrainMultiplier = multiplier;
@@ -338,34 +488,30 @@ public class DegradationService {
         return reactorCritical;
     }
 
-    /**
-     * Returns true if this status should disable all functional behavior.
-     * For gameplay, CRITICAL and OFFLINE are both considered locked.
-     */
     public boolean isFunctionLocked(ComponentStatus status) {
         return status == ComponentStatus.CRITICAL || status == ComponentStatus.OFFLINE;
     }
 
-    /**
-     * Returns true if the block at the given position has a registered component
-     * whose functionality should be suppressed.
-     */
     public boolean isBlockDisabled(String worldKey, long blockPosLong) {
         return cache.values().stream()
                 .anyMatch(e -> e.getWorldKey().equals(worldKey)
                         && e.getBlockPosLong() == blockPosLong
-                        && isFunctionLocked(e.getStatus()));
+                        && (e.isMissingBlock() || isFunctionLocked(e.getStatus())));
     }
 
-    private void onComponentOffline(ComponentEntry entry) {
-        System.out.println("[SecondDawnRP] Component OFFLINE: " + entry.getDisplayName());
+    private void onComponentOffline(ComponentEntry entry, boolean missingBlock) {
+        System.out.println("[SecondDawnRP] Component OFFLINE: " + entry.getDisplayName()
+                + (missingBlock ? " (missing block)" : ""));
 
         if (server == null) return;
 
-        Text msg = Text.literal(
-                        "[Engineering] OFFLINE: " + entry.getDisplayName()
-                                + " is non-functional. Immediate repair required.")
-                .formatted(Formatting.DARK_RED);
+        String msgText = missingBlock
+                ? "[Engineering] MISSING COMPONENT: " + entry.getDisplayName()
+                + " has been removed from its registered position. Immediate replacement required."
+                : "[Engineering] OFFLINE: " + entry.getDisplayName()
+                + " is non-functional. Immediate repair required.";
+
+        Text msg = Text.literal(msgText).formatted(Formatting.DARK_RED);
 
         server.getPlayerManager().getPlayerList()
                 .forEach(p -> p.sendMessage(msg, false));
@@ -385,12 +531,17 @@ public class DegradationService {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    private void normalizeEntry(ComponentEntry entry) {
+        if (entry == null) return;
+        entry.normalizeState();
+    }
+
     private ServerWorld resolveWorld(String worldKey) {
         if (server == null) return null;
 
-        for (ServerWorld w : server.getWorlds()) {
-            if (w.getRegistryKey().getValue().toString().equals(worldKey)) {
-                return w;
+        for (ServerWorld world : server.getWorlds()) {
+            if (world.getRegistryKey().getValue().toString().equals(worldKey)) {
+                return world;
             }
         }
         return null;
@@ -415,13 +566,5 @@ public class DegradationService {
         }
 
         return candidate;
-    }
-
-    private static String generateTaskId(String displayName) {
-        String base = displayName.toLowerCase()
-                .replaceAll("[^a-z0-9]+", "_")
-                .replaceAll("_+", "_")
-                .replaceAll("^_|_$", "");
-        return base + "_" + Long.toHexString(System.currentTimeMillis() & 0xFFFFFFL);
     }
 }

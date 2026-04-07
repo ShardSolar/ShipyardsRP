@@ -2,30 +2,20 @@ package net.shard.seconddawnrp.degradation.service;
 
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
 import net.shard.seconddawnrp.degradation.data.ComponentEntry;
-import net.shard.seconddawnrp.degradation.data.ComponentStatus;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Replaces the ExplosionMixin entirely.
+ * Periodically verifies registered components against live world state.
  *
- * <p>Runs two jobs on a periodic tick schedule:
+ * <p>Job 1 — Missing block detection:
+ * If a registered component's block is now gone, it is marked missing and kept
+ * registered so engineering can restore it.
  *
- * <p><b>Job 1 — Explosion damage detection (every 5 ticks)</b><br>
- * After an explosion removes blocks, those positions become air on the
- * next tick. We snapshot each component's block state and compare. If
- * a component block has become air since the last snapshot, we know it
- * was destroyed by an explosion (or other external cause). We apply
- * heavy damage and, if the block is still air, auto-unregister.
- *
- * <p><b>Job 2 — Stale world purge (once on server start)</b><br>
- * When a Minecraft world is deleted and recreated, the component JSON
- * persists with positions from the old world. On first run we check
- * every registered component: if its world key doesn't match any loaded
- * world, it is purged immediately.
+ * <p>Job 2 — Stale world purge:
+ * If a component references a world that no longer exists, it is removed.
  */
 public class ComponentIntegrityChecker {
 
@@ -40,14 +30,15 @@ public class ComponentIntegrityChecker {
     }
 
     public void tick(MinecraftServer server) {
-        // Startup purge — run once after server is fully loaded
         if (!startupPurgeDone) {
             purgeStaleWorlds(server);
             startupPurgeDone = true;
         }
 
         tickCounter++;
-        if (tickCounter < CHECK_INTERVAL_TICKS) return;
+        if (tickCounter < CHECK_INTERVAL_TICKS) {
+            return;
+        }
         tickCounter = 0;
 
         checkBlockIntegrity(server);
@@ -56,38 +47,36 @@ public class ComponentIntegrityChecker {
     // ── Job 1: Block integrity check ─────────────────────────────────────────
 
     private void checkBlockIntegrity(MinecraftServer server) {
-        List<ComponentEntry> toUnregister = new ArrayList<>();
+        long now = System.currentTimeMillis();
 
         for (ComponentEntry entry : service.getAllComponents()) {
             ServerWorld world = resolveWorld(server, entry.getWorldKey());
-            if (world == null) continue;
-
-            BlockPos pos = BlockPos.fromLong(entry.getBlockPosLong());
-            boolean isAir = world.getBlockState(pos).isAir();
-
-            if (!isAir) continue;
-
-            // Block is gone — was it OFFLINE already (expected) or sudden?
-            if (entry.getStatus() == ComponentStatus.OFFLINE) {
-                // Already offline — just clean up the orphaned registration
-                toUnregister.add(entry);
-                System.out.println("[SecondDawnRP] Purging offline component with missing block: "
-                        + entry.getComponentId());
-            } else {
-                // Sudden destruction — apply explosion damage and unregister
-                System.out.println("[SecondDawnRP] Component '" + entry.getDisplayName()
-                        + "' block destroyed externally — applying damage and unregistering.");
-                service.applyDamage(entry.getWorldKey(), entry.getBlockPosLong(), 100);
-                toUnregister.add(entry);
+            if (world == null) {
+                continue;
             }
-        }
 
-        for (ComponentEntry entry : toUnregister) {
-            service.unregister(entry.getWorldKey(), entry.getBlockPosLong());
+            boolean isAir = world.getBlockState(
+                    net.minecraft.util.math.BlockPos.fromLong(entry.getBlockPosLong())
+            ).isAir();
+
+            if (isAir) {
+                if (!entry.isMissingBlock()) {
+                    System.out.println("[SecondDawnRP] Component '" + entry.getDisplayName()
+                            + "' block is missing — marking component as missing.");
+                    service.markBlockMissing(entry.getWorldKey(), entry.getBlockPosLong(), now);
+                }
+            } else {
+                // If the block has been restored, clear missing state and restore minimum health.
+                if (entry.isMissingBlock()) {
+                    System.out.println("[SecondDawnRP] Component '" + entry.getDisplayName()
+                            + "' block restored — clearing missing state.");
+                    service.refreshMissingState(entry, true, now);
+                }
+            }
         }
     }
 
-    // ── Job 2: Stale world purge ──────────────────────────────────────────────
+    // ── Job 2: Stale world purge ─────────────────────────────────────────────
 
     private void purgeStaleWorlds(MinecraftServer server) {
         List<ComponentEntry> toRemove = new ArrayList<>();
@@ -115,7 +104,9 @@ public class ComponentIntegrityChecker {
 
     private static ServerWorld resolveWorld(MinecraftServer server, String worldKey) {
         for (ServerWorld w : server.getWorlds()) {
-            if (w.getRegistryKey().getValue().toString().equals(worldKey)) return w;
+            if (w.getRegistryKey().getValue().toString().equals(worldKey)) {
+                return w;
+            }
         }
         return null;
     }

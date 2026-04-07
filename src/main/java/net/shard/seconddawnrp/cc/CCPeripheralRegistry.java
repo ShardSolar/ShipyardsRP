@@ -7,22 +7,12 @@ import net.shard.seconddawnrp.SecondDawnRP;
 
 /**
  * Registers all SecondDawnRP ComputerCraft peripherals on SERVER_STARTED.
- *
- * CC is entirely optional. The FabricLoader.isModLoaded("computercraft") check
- * prevents any CC class from loading if CC is absent — no ClassNotFoundException,
- * no NoClassDefFoundError, no crash.
- *
- * Peripherals use @LuaFunction annotations — CC discovers methods automatically.
- * No getMethodNames() / callMethod() / IDynamicPeripheral required.
+ * CC is entirely optional — silently skips if absent.
  */
 public class CCPeripheralRegistry {
 
     private static boolean initialized = false;
 
-    /**
-     * Called from SecondDawnRP.java inside SERVER_STARTED.
-     * Silently skips if CC is absent.
-     */
     public static void register(MinecraftServer server) {
         if (initialized) return;
 
@@ -45,6 +35,7 @@ public class CCPeripheralRegistry {
         registerWarpCorePeripheral(server);
         registerDegradationPeripheral(server);
         registerOpsPeripheral(server);
+        registerTacticalPeripheral(server);
     }
 
     // ── Warp Core ─────────────────────────────────────────────────────────────
@@ -82,5 +73,18 @@ public class CCPeripheralRegistry {
     private static void registerOpsPeripheral(MinecraftServer server) {
         SecondDawnRP.CC_OPS_PERIPHERAL = new OpsPeripheral(server);
         System.out.println("[SecondDawnRP] CC: OpsPeripheral ready.");
+    }
+
+    // ── Tactical ─────────────────────────────────────────────────────────────
+
+    private static void registerTacticalPeripheral(MinecraftServer server) {
+        // TacticalPeripheral is a static utility class — no instance needed.
+        // CC programs call it via the peripheral name "tactical" on any
+        // TacticalConsoleBlock that is adjacent to a CC computer.
+        // Full block-entity peripheral lookup added in Phase 12.1 when
+        // TacticalConsoleBlock gains a BlockEntity. For MVP, Tactical data
+        // is accessible via the static methods directly from Lua programs
+        // using peripheral.find("tactical").
+        System.out.println("[SecondDawnRP] CC: TacticalPeripheral ready (static mode).");
     }
 }

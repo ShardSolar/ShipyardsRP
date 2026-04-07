@@ -1,5 +1,6 @@
 package net.shard.seconddawnrp.registry;
 
+import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
@@ -125,6 +126,11 @@ public class ModItems {
 
     public static final Item GURNEY = register("gurney",
             new GurneyItem(new Item.Settings().maxCount(1)));
+
+    public static final BlockItem TACTICAL_CONSOLE =
+            Registry.register(Registries.ITEM,
+                    SecondDawnRP.id("tactical_console"),
+                    new BlockItem(ModBlocks.TACTICAL_CONSOLE, new Item.Settings()));
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 

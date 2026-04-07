@@ -48,32 +48,28 @@ public class ComponentInteractListener {
             // OFFLINE — block all normal interactions except repair attempt and PAD inspect
             if (entry.getStatus() == ComponentStatus.OFFLINE) {
                 if (serverPlayer.isSneaking()) {
-                    // Allow repair attempt even when OFFLINE
                     return handleRepair(serverPlayer, worldKey, posLong, entry, held);
                 } else if (held.isOf(ModItems.ENGINEERING_PAD)) {
                     handleInspect(serverPlayer, entry);
                     return ActionResult.SUCCESS;
                 } else {
-                    // Block the interaction — component is non-functional
                     serverPlayer.sendMessage(
                             Text.literal("⚠ " + entry.getDisplayName()
                                             + " is OFFLINE — component non-functional.")
-                                    .formatted(Formatting.DARK_RED), true);
+                                    .formatted(Formatting.DARK_RED),
+                            true
+                    );
                     return ActionResult.FAIL;
                 }
             }
 
             if (serverPlayer.isSneaking()) {
-                // Sneak + right-click — attempt repair with held item
                 return handleRepair(serverPlayer, worldKey, posLong, entry, held);
             } else if (held.isOf(ModItems.ENGINEERING_PAD)) {
-                // If this block is also a registered warp core controller,
-                // defer to WarpCoreControllerBlock.onUse() for focused pad view
-                if (net.shard.seconddawnrp.SecondDawnRP.WARP_CORE_SERVICE
-                        .getByPosition(worldKey, posLong).isPresent()) {
+                if (SecondDawnRP.WARP_CORE_SERVICE.getByPosition(worldKey, posLong).isPresent()) {
                     return ActionResult.PASS;
                 }
-                // Plain right-click with PAD — inspect component
+
                 handleInspect(serverPlayer, entry);
                 return ActionResult.SUCCESS;
             }
@@ -86,7 +82,7 @@ public class ComponentInteractListener {
 
     private void handleInspect(ServerPlayerEntity player, ComponentEntry entry) {
         String repairItem = resolveRepairItemId(entry);
-        int repairCount   = resolveRepairItemCount(entry);
+        int repairCount = resolveRepairItemCount(entry);
 
         player.sendMessage(
                 Text.literal("── Component Status ──").formatted(Formatting.GOLD), false);
@@ -97,36 +93,51 @@ public class ComponentInteractListener {
         player.sendMessage(
                 Text.literal("Health: ").formatted(Formatting.GRAY)
                         .append(Text.literal(entry.getHealth() + "/100")
-                                .formatted(healthColor(entry.getStatus()))), false);
+                                .formatted(healthColor(entry.getStatus()))),
+                false);
         player.sendMessage(
                 Text.literal("Status: ").formatted(Formatting.GRAY)
                         .append(Text.literal(entry.getStatus().name())
-                                .formatted(healthColor(entry.getStatus()))), false);
+                                .formatted(healthColor(entry.getStatus()))),
+                false);
         player.sendMessage(
                 Text.literal("Repair item: ").formatted(Formatting.GRAY)
                         .append(Text.literal(repairCount + "x " + repairItem)
-                                .formatted(Formatting.AQUA)), false);
+                                .formatted(Formatting.AQUA)),
+                false);
         player.sendMessage(
                 Text.literal("ID: ").formatted(Formatting.GRAY)
                         .append(Text.literal(entry.getComponentId())
-                                .formatted(Formatting.DARK_GRAY)), false);
+                                .formatted(Formatting.DARK_GRAY)),
+                false);
     }
 
     // ── Repair ────────────────────────────────────────────────────────────────
 
     private ActionResult handleRepair(ServerPlayerEntity player, String worldKey,
                                       long posLong, ComponentEntry entry, ItemStack held) {
-        if (entry.getStatus() == ComponentStatus.NOMINAL) {
+
+        if (entry.isMissingBlock()) {
             player.sendMessage(
-                    Text.literal("This component does not require repair.")
-                            .formatted(Formatting.GREEN), false);
+                    Text.literal("This component is missing and must be replaced before it can be repaired.")
+                            .formatted(Formatting.RED),
+                    false
+            );
+            return ActionResult.SUCCESS;
+        }
+
+        if (entry.getHealth() >= 100) {
+            player.sendMessage(
+                    Text.literal("This component is already fully repaired.")
+                            .formatted(Formatting.GREEN),
+                    false
+            );
             return ActionResult.SUCCESS;
         }
 
         String requiredItemId = resolveRepairItemId(entry);
-        int requiredCount     = resolveRepairItemCount(entry);
+        int requiredCount = resolveRepairItemCount(entry);
 
-        // Check held item matches
         String heldItemId = Registries.ITEM.getId(held.getItem()).toString();
         if (!heldItemId.equals(requiredItemId)) {
             player.sendMessage(
@@ -135,11 +146,11 @@ public class ComponentInteractListener {
                             .append(Text.literal(requiredCount + "x " + requiredItemId)
                                     .formatted(Formatting.YELLOW))
                             .append(Text.literal(" to repair.").formatted(Formatting.RED)),
-                    false);
+                    false
+            );
             return ActionResult.SUCCESS;
         }
 
-        // Check player has enough
         int available = countItem(player, requiredItemId);
         if (available < requiredCount) {
             player.sendMessage(
@@ -149,11 +160,11 @@ public class ComponentInteractListener {
                                     .formatted(Formatting.YELLOW))
                             .append(Text.literal(", have " + available + ".")
                                     .formatted(Formatting.RED)),
-                    false);
+                    false
+            );
             return ActionResult.SUCCESS;
         }
 
-        // Consume items and apply repair
         consumeItems(player, requiredItemId, requiredCount);
         Optional<ComponentEntry> updated =
                 SecondDawnRP.DEGRADATION_SERVICE.applyRepair(worldKey, posLong);
@@ -164,11 +175,22 @@ public class ComponentInteractListener {
                                     + requiredItemId + "). Health: ")
                             .formatted(Formatting.GRAY)
                             .append(Text.literal(e.getHealth() + "/100")
-                                    .formatted(healthColor(e.getStatus()))), false);
-            if (e.getStatus() == ComponentStatus.NOMINAL) {
+                                    .formatted(healthColor(e.getStatus()))),
+                    false
+            );
+
+            if (e.getHealth() >= 100) {
                 player.sendMessage(
-                        Text.literal("Component is now fully operational.")
-                                .formatted(Formatting.GREEN), false);
+                        Text.literal("Component fully repaired.")
+                                .formatted(Formatting.GREEN),
+                        false
+                );
+            } else if (e.getStatus() == ComponentStatus.NOMINAL) {
+                player.sendMessage(
+                        Text.literal("Component is operational, but further repairs can restore full integrity.")
+                                .formatted(Formatting.GREEN),
+                        false
+                );
             }
         });
 
@@ -197,6 +219,7 @@ public class ComponentInteractListener {
     private static void consumeItems(ServerPlayerEntity player, String itemId, int count) {
         var item = Registries.ITEM.get(Identifier.of(itemId));
         int remaining = count;
+
         for (int i = 0; i < player.getInventory().size() && remaining > 0; i++) {
             ItemStack stack = player.getInventory().getStack(i);
             if (stack.isOf(item)) {
@@ -209,10 +232,10 @@ public class ComponentInteractListener {
 
     private static Formatting healthColor(ComponentStatus status) {
         return switch (status) {
-            case NOMINAL  -> Formatting.GREEN;
+            case NOMINAL -> Formatting.GREEN;
             case DEGRADED -> Formatting.YELLOW;
             case CRITICAL -> Formatting.RED;
-            case OFFLINE  -> Formatting.DARK_RED;
+            case OFFLINE -> Formatting.DARK_RED;
         };
     }
 }

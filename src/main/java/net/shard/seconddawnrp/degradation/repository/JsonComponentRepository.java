@@ -135,6 +135,7 @@ public class JsonComponentRepository implements ComponentRepository {
         obj.addProperty("displayName", e.getDisplayName());
         obj.addProperty("health", e.getHealth());
         obj.addProperty("status", e.getStatus().name());
+        obj.addProperty("missingBlock", e.isMissingBlock());
         obj.addProperty("lastDrainTickMs", e.getLastDrainTickMs());
         obj.addProperty("lastTaskGeneratedMs", e.getLastTaskGeneratedMs());
         obj.addProperty("registeredByUuid",
@@ -145,25 +146,46 @@ public class JsonComponentRepository implements ComponentRepository {
     }
 
     private static ComponentEntry fromJson(JsonObject obj) {
+        String componentId = obj.get("componentId").getAsString();
+        String worldKey = obj.get("worldKey").getAsString();
+        long blockPosLong = obj.get("blockPosLong").getAsLong();
+        String blockTypeId = obj.get("blockTypeId").getAsString();
+        String displayName = obj.get("displayName").getAsString();
+        int health = obj.get("health").getAsInt();
+        ComponentStatus status = ComponentStatus.valueOf(obj.get("status").getAsString());
+        long lastDrainTickMs = obj.get("lastDrainTickMs").getAsLong();
+        long lastTaskGeneratedMs = obj.get("lastTaskGeneratedMs").getAsLong();
+
         String registeredByStr = obj.has("registeredByUuid")
                 && !obj.get("registeredByUuid").isJsonNull()
                 ? obj.get("registeredByUuid").getAsString() : null;
+
+        UUID registeredByUuid = registeredByStr != null
+                ? UUID.fromString(registeredByStr) : null;
+
         String repairItemId = obj.has("repairItemId") && !obj.get("repairItemId").isJsonNull()
                 ? obj.get("repairItemId").getAsString() : null;
-        int repairItemCount = obj.has("repairItemCount") ? obj.get("repairItemCount").getAsInt() : 0;
+
+        int repairItemCount = obj.has("repairItemCount")
+                ? obj.get("repairItemCount").getAsInt() : 0;
+
+        // 🔥 NEW FIELD (safe default for now)
+        boolean missingBlock = obj.has("missingBlock") && obj.get("missingBlock").getAsBoolean();
+
         return new ComponentEntry(
-                obj.get("componentId").getAsString(),
-                obj.get("worldKey").getAsString(),
-                obj.get("blockPosLong").getAsLong(),
-                obj.get("blockTypeId").getAsString(),
-                obj.get("displayName").getAsString(),
-                obj.get("health").getAsInt(),
-                ComponentStatus.valueOf(obj.get("status").getAsString()),
-                obj.get("lastDrainTickMs").getAsLong(),
-                obj.get("lastTaskGeneratedMs").getAsLong(),
-                registeredByStr != null ? UUID.fromString(registeredByStr) : null,
+                componentId,
+                worldKey,
+                blockPosLong,
+                blockTypeId,
+                displayName,
+                health,
+                status,
+                lastDrainTickMs,
+                lastTaskGeneratedMs,
+                registeredByUuid,
                 repairItemId,
-                repairItemCount
+                repairItemCount,
+                missingBlock
         );
     }
 }

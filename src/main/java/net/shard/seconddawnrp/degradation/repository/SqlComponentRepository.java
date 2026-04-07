@@ -35,8 +35,8 @@ public class SqlComponentRepository implements ComponentRepository {
         String sql = "INSERT OR REPLACE INTO components ("
                 + "component_id, world_key, block_pos_long, block_type_id, display_name, "
                 + "health, status, last_drain_tick_ms, last_task_generated_ms, registered_by_uuid, "
-                + "repair_item_id, repair_item_count"
-                + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?)";
+                + "repair_item_id, repair_item_count, missing_block"
+                + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)";
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, entry.getComponentId());
@@ -52,6 +52,7 @@ public class SqlComponentRepository implements ComponentRepository {
                     ? entry.getRegisteredByUuid().toString() : null);
             ps.setString(11, entry.getRepairItemId());
             ps.setInt(12, entry.getRepairItemCount());
+            ps.setInt(13, entry.isMissingBlock() ? 1 : 0);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Failed to save component " + entry.getComponentId(), e);
@@ -82,6 +83,7 @@ public class SqlComponentRepository implements ComponentRepository {
                         ? entry.getRegisteredByUuid().toString() : null);
                 ps.setString(11, entry.getRepairItemId());
                 ps.setInt(12, entry.getRepairItemCount());
+                ps.setInt(13, entry.isMissingBlock() ? 1 : 0);
                 ps.addBatch();
             }
             ps.executeBatch();
@@ -164,20 +166,40 @@ public class SqlComponentRepository implements ComponentRepository {
     // ── Mapping ───────────────────────────────────────────────────────────────
 
     private static ComponentEntry fromResultSet(ResultSet rs) throws SQLException {
+        String componentId = rs.getString("component_id");
+        String worldKey = rs.getString("world_key");
+        long blockPosLong = rs.getLong("block_pos_long");
+        String blockTypeId = rs.getString("block_type_id");
+        String displayName = rs.getString("display_name");
+        int health = rs.getInt("health");
+        ComponentStatus status = ComponentStatus.valueOf(rs.getString("status"));
+        long lastDrainTickMs = rs.getLong("last_drain_tick_ms");
+        long lastTaskGeneratedMs = rs.getLong("last_task_generated_ms");
+
         String uuidStr = rs.getString("registered_by_uuid");
+        UUID registeredByUuid = (uuidStr != null && !uuidStr.isBlank())
+                ? UUID.fromString(uuidStr) : null;
+
+        String repairItemId = rs.getString("repair_item_id");
+        int repairItemCount = rs.getInt("repair_item_count");
+
+        // 🔥 NEW FIELD (safe default for now)
+        boolean missingBlock = false;
+
         return new ComponentEntry(
-                rs.getString("component_id"),
-                rs.getString("world_key"),
-                rs.getLong("block_pos_long"),
-                rs.getString("block_type_id"),
-                rs.getString("display_name"),
-                rs.getInt("health"),
-                ComponentStatus.valueOf(rs.getString("status")),
-                rs.getLong("last_drain_tick_ms"),
-                rs.getLong("last_task_generated_ms"),
-                uuidStr != null ? UUID.fromString(uuidStr) : null,
-                rs.getString("repair_item_id"),
-                rs.getInt("repair_item_count")
+                componentId,
+                worldKey,
+                blockPosLong,
+                blockTypeId,
+                displayName,
+                health,
+                status,
+                lastDrainTickMs,
+                lastTaskGeneratedMs,
+                registeredByUuid,
+                repairItemId,
+                repairItemCount,
+                missingBlock
         );
     }
 }
