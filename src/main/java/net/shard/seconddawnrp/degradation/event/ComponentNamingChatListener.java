@@ -68,7 +68,8 @@ public class ComponentNamingChatListener {
                             pending.blockPosLong(),
                             pending.blockTypeId(),
                             displayName,
-                            sender.getUuid()
+                            sender.getUuid(),
+                            pending.shipId()
                     );
 
                     // Apply repair item override if not default

@@ -10,21 +10,29 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * GM Ship Control Screen — opened via /gm encounter or a dedicated GM block.
- * Allows GM to control any ship in the encounter directly.
+ * GM Ship Control Screen — opened when gmMode=true and an encounter is ACTIVE or PAUSED.
  *
- * Controls:
- *   Ship selector dropdown
- *   Heading/Speed manual input
- *   AI Mode selector (Phase 13 — stubbed)
- *   Weapon fire buttons (GM bypass)
- *   Power reroute sliders
- *   Combat log
+ * Fix (V15): HDG/SPD input click zones now mirror the draw offsets exactly.
+ * drawShipControls() uses a mutable local y that advances through header lines
+ * before reaching the input row. mouseClicked() must replicate that same
+ * advance rather than using a hardcoded offset.
+ *
+ * Draw path to input row (from y = oy + 38):
+ *   y += 22   (name + hull line)
+ *   y += 10   ("HELM:" label)
+ *   y += 10   (current heading/speed readout)
+ *   → input fields drawn at this y
+ *   controlsY = oy + 38 + 22 + 10 + 10 = oy + 80
  */
 public class GmShipConsoleScreen extends Screen {
 
     private static final int GUI_W = 380;
     private static final int GUI_H = 240;
+
+    // Offset of the ship controls panel from oy
+    private static final int CONTROLS_PANEL_Y_OFFSET = 38;
+    // How far into drawShipControls() the input row sits
+    private static final int INPUT_ROW_Y_DELTA = 22 + 10 + 10; // = 42
 
     private final String encounterId;
     private final List<ShipSnapshot> ships;
@@ -34,22 +42,18 @@ public class GmShipConsoleScreen extends Screen {
     private int selectedShipIdx = 0;
     private String selectedTargetId = null;
 
-    // Tab
     private enum GmTab { SHIPS, MAP }
     private GmTab activeTab = GmTab.SHIPS;
 
-    // Tooltip
     private String hoveredLogTooltip = null;
     private int tooltipX, tooltipY;
 
-    // Input state
     private float   inputHeading   = 0;
     private float   inputSpeed     = 0;
     private boolean editingHeading = false;
     private boolean editingSpeed   = false;
     private String  inputBuffer    = "";
 
-    // Colors
     private static final int COL_BG      = 0xE0080E18;
     private static final int COL_HEADER  = 0xFF00AAFF;
     private static final int COL_TEXT    = 0xFFCCEEFF;
@@ -83,9 +87,7 @@ public class GmShipConsoleScreen extends Screen {
     }
 
     @Override
-    public void renderBackground(DrawContext ctx, int mouseX, int mouseY, float delta) {
-        // suppress — solid fill in render()
-    }
+    public void renderBackground(DrawContext ctx, int mouseX, int mouseY, float delta) {}
 
     @Override
     public void render(DrawContext ctx, int mx, int my, float delta) {
@@ -126,8 +128,8 @@ public class GmShipConsoleScreen extends Screen {
 
             if (!ships.isEmpty() && selectedShipIdx < ships.size()) {
                 ShipSnapshot ship = ships.get(selectedShipIdx);
-                drawShipControls(ctx, ox + 114, oy + 38, GUI_W - 118, GUI_H - 42,
-                        ship, mx, my);
+                drawShipControls(ctx, ox + 114, oy + CONTROLS_PANEL_Y_OFFSET,
+                        GUI_W - 118, GUI_H - 42, ship, mx, my);
             }
         }
 
@@ -144,21 +146,28 @@ public class GmShipConsoleScreen extends Screen {
                                   ShipSnapshot ship, int mx, int my) {
         ctx.drawBorder(x - 2, y - 2, w + 4, h + 4, COL_BORDER);
 
+        // y + 0: name
         ctx.drawText(textRenderer,
                 "§f" + ship.registryName() + " §8[" + ship.combatId() + "]",
                 x, y, COL_TEXT, false);
+        // y + 10: hull
         ctx.drawText(textRenderer,
                 "§8Hull: §f" + ship.hullIntegrity() + "/" + ship.hullMax()
                         + " §8| " + ship.hullState(),
                 x, y + 10, COL_DIM, false);
 
+        // y + 22 after += 22
         y += 22;
         ctx.drawText(textRenderer, "§bHELM:", x, y, COL_HEADER, false);
+
+        // y + 32 after += 10
         y += 10;
         ctx.drawText(textRenderer,
                 "§8Heading: §f" + (int)ship.heading()
                         + "°  Speed: " + String.format("%.1f", ship.speed()),
                 x, y, COL_DIM, false);
+
+        // y + 42 after += 10 — INPUT ROW
         y += 10;
 
         boolean hHov = inBounds(mx, my, x, y, 80, 12);
@@ -235,6 +244,8 @@ public class GmShipConsoleScreen extends Screen {
         }
     }
 
+    // ── Drawing helpers ───────────────────────────────────────────────────────
+
     private void drawGmTab(DrawContext ctx, int tx, int ty, int tw, int th,
                            String label, GmTab tab, int mx, int my) {
         boolean active = activeTab == tab;
@@ -266,7 +277,6 @@ public class GmShipConsoleScreen extends Screen {
             int sx = mapCX + (int)(ship.posX() * scale);
             int sz = mapCY + (int)(ship.posZ() * scale);
             int color = "FRIENDLY".equals(ship.faction()) ? COL_FRIEND : COL_HOSTILE;
-
             ctx.fill(sx - 3, sz - 3, sx + 3, sz + 3, color);
             double rad = Math.toRadians(ship.heading());
             int hx = sx + (int)(Math.cos(rad) * 8);
@@ -275,14 +285,12 @@ public class GmShipConsoleScreen extends Screen {
             ctx.drawText(textRenderer,
                     ship.combatId() + " §8" + String.format("%.0f°", ship.heading()),
                     sx + 4, sz - 4, color, false);
-
             int maxS = Math.max(1, (ship.shieldFore() + ship.shieldAft()
                     + ship.shieldPort() + ship.shieldStarboard()) / 4);
             drawMapShieldDot(ctx, sx,     sz - 6, ship.shieldFore(),      maxS);
             drawMapShieldDot(ctx, sx,     sz + 6, ship.shieldAft(),       maxS);
             drawMapShieldDot(ctx, sx - 6, sz,     ship.shieldPort(),      maxS);
             drawMapShieldDot(ctx, sx + 6, sz,     ship.shieldStarboard(), maxS);
-
             if (inBounds(mx, my, sx - 6, sz - 6, 12, 12)) {
                 hoveredLogTooltip = ship.registryName()
                         + " | Hull: " + ship.hullIntegrity() + "/" + ship.hullMax()
@@ -291,26 +299,22 @@ public class GmShipConsoleScreen extends Screen {
                 tooltipX = mx; tooltipY = my;
             }
         }
-
         ctx.drawText(textRenderer, "§9■ FRIENDLY  §c■ HOSTILE",
                 x + 4, y + h - 10, 0xFFAAAAAA, false);
     }
 
     private void drawMapShieldDot(DrawContext ctx, int x, int y, int current, int max) {
         float pct = max <= 0 ? 0 : (float)current / max;
-        int color = pct > 0.5f ? 0xFF2266FF
-                : pct > 0.2f ? 0xFFFFBB33
-                : pct > 0    ? 0xFFFF6622
-                : 0xFF440000;
+        int color = pct > 0.5f ? 0xFF2266FF : pct > 0.2f ? 0xFFFFBB33
+                                              : pct > 0 ? 0xFFFF6622 : 0xFF440000;
         ctx.fill(x - 1, y - 1, x + 1, y + 1, color);
     }
 
     private void drawGmCircle(DrawContext ctx, int cx, int cy, int r, int color) {
         for (int i = 0; i < 20; i++) {
             double angle = i * Math.PI * 2 / 20;
-            int px = cx + (int)(Math.cos(angle) * r);
-            int py = cy + (int)(Math.sin(angle) * r);
-            ctx.fill(px, py, px + 1, py + 1, color);
+            ctx.fill(cx + (int)(Math.cos(angle) * r), cy + (int)(Math.sin(angle) * r),
+                    cx + (int)(Math.cos(angle) * r) + 1, cy + (int)(Math.sin(angle) * r) + 1, color);
         }
     }
 
@@ -319,8 +323,7 @@ public class GmShipConsoleScreen extends Screen {
         float pct = max <= 0 ? 0 : Math.min(1f, (float)current / max);
         int color = pct > 0.5f ? 0xFF2266FF : pct > 0.2f ? 0xFFFFBB33 : 0xFFFF4444;
         ctx.drawText(textRenderer, label, x, y, COL_DIM, false);
-        int bx = x + 10;
-        int bw = w - 30;
+        int bx = x + 10, bw = w - 30;
         ctx.fill(bx, y, bx + bw, y + 7, 0xFF111820);
         ctx.fill(bx, y, bx + (int)(bw * pct), y + 7, color);
         ctx.drawBorder(bx, y, bw, 7, COL_BORDER);
@@ -337,13 +340,14 @@ public class GmShipConsoleScreen extends Screen {
                 enabled ? 0xFFFFFFFF : COL_DIM, false);
     }
 
+    // ── Mouse ─────────────────────────────────────────────────────────────────
+
     @Override
     public boolean mouseClicked(double mx, double my, int button) {
         if (button != 0) return super.mouseClicked(mx, my, button);
 
         if (inBounds(mx, my, ox + 4,  oy + 22, 55, 13)) { activeTab = GmTab.SHIPS; return true; }
         if (inBounds(mx, my, ox + 62, oy + 22, 55, 13)) { activeTab = GmTab.MAP;   return true; }
-
         if (activeTab == GmTab.MAP) return super.mouseClicked(mx, my, button);
 
         // Ship list selection
@@ -351,9 +355,8 @@ public class GmShipConsoleScreen extends Screen {
         for (int i = 0; i < ships.size(); i++) {
             if (inBounds(mx, my, ox + 4, listY - 1, 100, 10)) {
                 selectedShipIdx = i;
-                editingHeading  = false;
-                editingSpeed    = false;
-                inputBuffer     = "";
+                editingHeading = editingSpeed = false;
+                inputBuffer = "";
                 return true;
             }
             listY += 11;
@@ -364,49 +367,53 @@ public class GmShipConsoleScreen extends Screen {
 
         ShipSnapshot ship = ships.get(selectedShipIdx);
 
+        // Controls panel origin — matches drawShipControls() call site
         int cx = ox + 114;
-        int cy = oy + 24 + 22 + 10 + 10;
+        // Input row = panel_y + 22 (name+hull) + 10 (HELM label) + 10 (readout) = +42
+        int cy = oy + CONTROLS_PANEL_Y_OFFSET + INPUT_ROW_Y_DELTA;
 
-        // Heading input
+        // HDG input field
         if (inBounds(mx, my, cx, cy, 80, 12)) {
             editingHeading = true; editingSpeed = false;
             inputBuffer = String.valueOf((int)inputHeading);
             return true;
         }
-        // Speed input
+        // SPD input field
         if (inBounds(mx, my, cx + 84, cy, 60, 12)) {
             editingSpeed = true; editingHeading = false;
-            inputBuffer = String.valueOf(inputSpeed);
+            inputBuffer = String.format("%.1f", inputSpeed);
             return true;
         }
-        // Set helm
+        // SET HELM button
         if (inBounds(mx, my, cx + 148, cy, 50, 12)) {
-            editingHeading = false; editingSpeed = false;
+            editingHeading = editingSpeed = false;
             ClientPlayNetworking.send(new HelmInputPayload(
                     encounterId, ship.shipId(), inputHeading, inputSpeed, false));
             return true;
         }
 
         // Target selection
-        int ty = oy + 24 + 22 + 10 + 10 + 16 + 10;
+        // Draw path: input(cy,h=12) → +16 spacer → WEAPONS label → +10 → enemies
+        // Enemy rows start at cy+38. Width = full controls panel ~258px, safe click zone 200px.
+        int ty = cy + 12 + 16 + 10;
         List<ShipSnapshot> enemies = ships.stream()
                 .filter(s -> !s.faction().equals(ship.faction()) && !s.destroyed()).toList();
         for (ShipSnapshot enemy : enemies) {
-            if (inBounds(mx, my, cx, ty - 1, 120, 10)) {
+            if (inBounds(mx, my, cx, ty - 1, 200, 11)) {
                 selectedTargetId = enemy.shipId(); return true;
             }
             ty += 10;
         }
 
-        // Fire buttons — use ship.shipId() and selectedTargetId (not bare variables)
+        // Fire buttons — after target list + 2 gap
+        // ty is now cy + 38 + (N_enemies * 10) + 2
         ty += 2;
         if (inBounds(mx, my, cx, ty, 60, 12) && selectedTargetId != null) {
             ClientPlayNetworking.send(new WeaponFirePayload(
                     encounterId, ship.shipId(), selectedTargetId, "PHASER", "AUTO"));
             return true;
         }
-        if (inBounds(mx, my, cx + 64, ty, 60, 12)
-                && selectedTargetId != null && ship.torpedoCount() > 0) {
+        if (inBounds(mx, my, cx + 64, ty, 60, 12) && selectedTargetId != null) {
             ClientPlayNetworking.send(new WeaponFirePayload(
                     encounterId, ship.shipId(), selectedTargetId, "TORPEDO", "AUTO"));
             return true;
@@ -422,16 +429,10 @@ public class GmShipConsoleScreen extends Screen {
                 editingHeading = editingSpeed = false; inputBuffer = ""; return true;
             }
             if (key == 257 || key == 335) {
-                try {
-                    if (editingHeading) inputHeading = Float.parseFloat(inputBuffer);
-                    else                inputSpeed   = Float.parseFloat(inputBuffer);
-                } catch (NumberFormatException ignored) {}
-                editingHeading = editingSpeed = false; inputBuffer = "";
-                return true;
+                commitInput(); return true;
             }
             if (key == 259 && !inputBuffer.isEmpty()) {
-                inputBuffer = inputBuffer.substring(0, inputBuffer.length() - 1);
-                return true;
+                inputBuffer = inputBuffer.substring(0, inputBuffer.length() - 1); return true;
             }
             return true;
         }
@@ -446,6 +447,15 @@ public class GmShipConsoleScreen extends Screen {
             return true;
         }
         return super.charTyped(chr, mods);
+    }
+
+    private void commitInput() {
+        try {
+            if (editingHeading) inputHeading = ((Float.parseFloat(inputBuffer) % 360) + 360) % 360;
+            if (editingSpeed)   inputSpeed   = Math.max(0, Float.parseFloat(inputBuffer));
+        } catch (NumberFormatException ignored) {}
+        editingHeading = editingSpeed = false;
+        inputBuffer = "";
     }
 
     private boolean inBounds(double mx, double my, int x, int y, int w, int h) {

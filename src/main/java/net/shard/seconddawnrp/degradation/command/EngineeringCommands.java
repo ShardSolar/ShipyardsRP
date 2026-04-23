@@ -314,6 +314,50 @@ public final class EngineeringCommands {
                                             return components.size();
                                         })))
                 ) // end /engineering ship
+
+                // /engineering warpcore ship assign|unassign|list
+                .then(CommandManager.literal("warpcore")
+                        .then(CommandManager.literal("ship")
+                                .then(CommandManager.literal("assign")
+                                        .then(CommandManager.argument("coreId", StringArgumentType.word())
+                                                .then(CommandManager.argument("shipId", StringArgumentType.word())
+                                                        .suggests(SUGGEST_SHIPS)
+                                                        .executes(ctx -> {
+                                                            if (SecondDawnRP.WARP_CORE_SERVICE == null) { ctx.getSource().sendError(Text.literal("Warp core service not available.")); return 0; }
+                                                            String coreId = StringArgumentType.getString(ctx, "coreId");
+                                                            String shipId = StringArgumentType.getString(ctx, "shipId");
+                                                            var opt = SecondDawnRP.WARP_CORE_SERVICE.getById(coreId);
+                                                            if (opt.isEmpty()) { ctx.getSource().sendError(Text.literal("No warp core found with ID '" + coreId + "'.")); return 0; }
+                                                            opt.get().setShipId(shipId);
+                                                            SecondDawnRP.WARP_CORE_SERVICE.save();
+                                                            ctx.getSource().sendFeedback(() -> Text.literal("Warp core '" + coreId + "' bound to ship '" + shipId + "'.").formatted(Formatting.GREEN), true);
+                                                            return 1;
+                                                        }))))
+                                .then(CommandManager.literal("unassign")
+                                        .then(CommandManager.argument("coreId", StringArgumentType.word())
+                                                .executes(ctx -> {
+                                                    if (SecondDawnRP.WARP_CORE_SERVICE == null) { ctx.getSource().sendError(Text.literal("Warp core service not available.")); return 0; }
+                                                    String coreId = StringArgumentType.getString(ctx, "coreId");
+                                                    var opt = SecondDawnRP.WARP_CORE_SERVICE.getById(coreId);
+                                                    if (opt.isEmpty()) { ctx.getSource().sendError(Text.literal("No warp core found with ID '" + coreId + "'.")); return 0; }
+                                                    opt.get().setShipId(null);
+                                                    SecondDawnRP.WARP_CORE_SERVICE.save();
+                                                    ctx.getSource().sendFeedback(() -> Text.literal("Ship binding removed from warp core '" + coreId + "'.").formatted(Formatting.YELLOW), true);
+                                                    return 1;
+                                                })))
+                                .then(CommandManager.literal("list")
+                                        .executes(ctx -> {
+                                            if (SecondDawnRP.WARP_CORE_SERVICE == null) { ctx.getSource().sendError(Text.literal("Warp core service not available.")); return 0; }
+                                            var cores = SecondDawnRP.WARP_CORE_SERVICE.getAll();
+                                            if (cores.isEmpty()) { ctx.getSource().sendFeedback(() -> Text.literal("No warp cores registered.").formatted(Formatting.GRAY), false); return 0; }
+                                            ctx.getSource().sendFeedback(() -> Text.literal("── Warp Cores ──").formatted(Formatting.AQUA), false);
+                                            cores.forEach(e -> ctx.getSource().sendFeedback(() -> Text.literal(
+                                                            "  " + e.getEntryId() + " | " + e.getState().name()
+                                                                    + " | fuel: " + e.getFuelRods()
+                                                                    + (e.hasShipBinding() ? " §b[" + e.getShipId() + "]" : " §8[unbound]"))
+                                                    .formatted(Formatting.WHITE), false));
+                                            return cores.size();
+                                        }))))
         );
     }
 

@@ -11,6 +11,9 @@ import java.util.*;
 /**
  * JSON-backed warp core repository supporting multiple warp cores.
  * Stored as a JSON array at {@code config/assets/seconddawnrp/warpcore.json}.
+ *
+ * V15: adds optional "shipId" field to each entry.
+ * Old saves without this field load correctly — shipId defaults to null.
  * Backward compatible with old single-object saves.
  */
 public class JsonWarpCoreRepository implements WarpCoreRepository {
@@ -34,10 +37,17 @@ public class JsonWarpCoreRepository implements WarpCoreRepository {
         JsonArray arr = new JsonArray();
         for (WarpCoreEntry e : entries) arr.add(toJson(e));
         Path tmp = filePath.resolveSibling(FILE_NAME + ".tmp");
-        try (Writer w = Files.newBufferedWriter(tmp)) { GSON.toJson(arr, w); }
-        catch (IOException e) { throw new RuntimeException("Failed to write warpcore.tmp", e); }
-        try { Files.move(tmp, filePath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE); }
-        catch (IOException e) { throw new RuntimeException("Failed to replace warpcore.json", e); }
+        try (Writer w = Files.newBufferedWriter(tmp)) {
+            GSON.toJson(arr, w);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to write warpcore.tmp", e);
+        }
+        try {
+            Files.move(tmp, filePath,
+                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to replace warpcore.json", e);
+        }
     }
 
     @Override
@@ -59,7 +69,9 @@ public class JsonWarpCoreRepository implements WarpCoreRepository {
                 if (e != null) result.add(e);
             }
             return result;
-        } catch (IOException e) { throw new RuntimeException("Failed to load warpcore.json", e); }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to load warpcore.json", e);
+        }
     }
 
     @Override
@@ -73,37 +85,56 @@ public class JsonWarpCoreRepository implements WarpCoreRepository {
 
     private static JsonObject toJson(WarpCoreEntry e) {
         JsonObject o = new JsonObject();
-        o.addProperty("entryId", e.getEntryId());
-        o.addProperty("worldKey", e.getWorldKey());
-        o.addProperty("blockPosLong", e.getBlockPosLong());
-        o.addProperty("state", e.getState().name());
-        o.addProperty("fuelRods", e.getFuelRods());
-        o.addProperty("lastFuelDrainMs", e.getLastFuelDrainMs());
-        o.addProperty("lastFaultTaskMs", e.getLastFaultTaskMs());
+        o.addProperty("entryId",            e.getEntryId());
+        o.addProperty("worldKey",           e.getWorldKey());
+        o.addProperty("blockPosLong",       e.getBlockPosLong());
+        o.addProperty("state",              e.getState().name());
+        o.addProperty("fuelRods",           e.getFuelRods());
+        o.addProperty("lastFuelDrainMs",    e.getLastFuelDrainMs());
+        o.addProperty("lastFaultTaskMs",    e.getLastFaultTaskMs());
         o.addProperty("currentPowerOutput", e.getCurrentPowerOutput());
-        com.google.gson.JsonArray coils = new com.google.gson.JsonArray();
+
+        JsonArray coils = new JsonArray();
         e.getResonanceCoilIds().forEach(coils::add);
         o.add("resonanceCoilIds", coils);
+
         o.addProperty("registeredByUuid",
                 e.getRegisteredByUuid() != null ? e.getRegisteredByUuid().toString() : null);
+
+        // V15 — shipId (null written explicitly for clarity)
+        if (e.getShipId() != null) {
+            o.addProperty("shipId", e.getShipId());
+        } else {
+            o.add("shipId", JsonNull.INSTANCE);
+        }
+
         return o;
     }
 
     private static WarpCoreEntry fromJson(JsonObject o) {
         if (o == null) return null;
+
         String uuidStr = o.has("registeredByUuid") && !o.get("registeredByUuid").isJsonNull()
                 ? o.get("registeredByUuid").getAsString() : null;
-        java.util.List<String> coilIds = new java.util.ArrayList<>();
+
+        List<String> coilIds = new ArrayList<>();
         if (o.has("resonanceCoilIds") && o.get("resonanceCoilIds").isJsonArray()) {
             o.get("resonanceCoilIds").getAsJsonArray()
                     .forEach(el -> coilIds.add(el.getAsString()));
-        } else if (o.has("resonanceCoilComponentId") && !o.get("resonanceCoilComponentId").isJsonNull()) {
+        } else if (o.has("resonanceCoilComponentId")
+                && !o.get("resonanceCoilComponentId").isJsonNull()) {
             // backward compat with old single-coil saves
             coilIds.add(o.get("resonanceCoilComponentId").getAsString());
         }
+
         // Generate entryId from blockPosLong for old single-core saves
-        String entryId = o.has("entryId") ? o.get("entryId").getAsString()
+        String entryId = o.has("entryId")
+                ? o.get("entryId").getAsString()
                 : "wc_" + Long.toHexString(o.get("blockPosLong").getAsLong() & 0xFFFFFFL);
+
+        // V15 — shipId optional; null if key absent or explicitly null
+        String shipId = o.has("shipId") && !o.get("shipId").isJsonNull()
+                ? o.get("shipId").getAsString() : null;
 
         return new WarpCoreEntry(
                 entryId,
@@ -115,7 +146,8 @@ public class JsonWarpCoreRepository implements WarpCoreRepository {
                 o.get("lastFaultTaskMs").getAsLong(),
                 o.get("currentPowerOutput").getAsInt(),
                 coilIds,
-                uuidStr != null ? UUID.fromString(uuidStr) : null
+                uuidStr != null ? UUID.fromString(uuidStr) : null,
+                shipId
         );
     }
 }
