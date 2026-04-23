@@ -22,6 +22,13 @@ public class DamageZone {
     private int     maxHp;
     private boolean damaged;
 
+    /**
+     * Tracks which progressive damage stage has been visually applied to this zone.
+     * 0 = none (nominal), 1 = light damage, 2 = heavy damage, 3 = destroyed
+     * One-way only — never decreases without an explicit repair().
+     */
+    private int damageStageApplied = 0;
+
     // Model block positions — admin assigns via DamageZoneTool
     private final List<Long> modelBlockPositions    = new ArrayList<>();
 
@@ -46,8 +53,9 @@ public class DamageZone {
     }
 
     public void repair() {
-        currentHp = maxHp;
-        damaged   = false;
+        currentHp         = maxHp;
+        damaged           = false;
+        damageStageApplied = 0;
     }
 
     public boolean isDestroyed()      { return currentHp <= 0; }
@@ -61,32 +69,23 @@ public class DamageZone {
 
     public void addRealShipBlock(BlockPos pos) {
         realShipBlockPositions.add(pos.asLong());
-        cachedBounds = null; // invalidate cache
+        cachedBounds = null;
     }
 
-    /**
-     * Remove a model block by position. Returns true if it was registered.
-     */
     public boolean removeModelBlock(BlockPos pos) {
         return modelBlockPositions.remove(pos.asLong());
     }
 
-    /**
-     * Remove a real ship block by position. Returns true if it was registered.
-     * Invalidates the bounding box cache.
-     */
     public boolean removeRealShipBlock(BlockPos pos) {
         boolean removed = realShipBlockPositions.remove(pos.asLong());
         if (removed) cachedBounds = null;
         return removed;
     }
 
-    /** Clear all model block registrations. */
     public void clearModelBlocks() {
         modelBlockPositions.clear();
     }
 
-    /** Clear all real ship block registrations. Invalidates bounding box cache. */
     public void clearRealShipBlocks() {
         realShipBlockPositions.clear();
         cachedBounds = null;
@@ -102,11 +101,6 @@ public class DamageZone {
 
     // ── Bounding box ──────────────────────────────────────────────────────────
 
-    /**
-     * Returns a bounding box enclosing all real ship blocks, expanded by
-     * {@code padding} blocks on every axis.
-     * Returns null if no real ship blocks have been registered yet.
-     */
     public ZoneBounds getRealBlockBounds(int padding) {
         if (cachedBounds != null) return cachedBounds;
         if (realShipBlockPositions.isEmpty()) return null;
@@ -130,11 +124,6 @@ public class DamageZone {
         return cachedBounds;
     }
 
-    /**
-     * Returns true if the given player is inside this zone's real block
-     * bounding box (with 3-block padding on all axes).
-     * Always returns false if no real blocks have been registered.
-     */
     public boolean containsPlayer(PlayerEntity player) {
         ZoneBounds bounds = getRealBlockBounds(3);
         if (bounds == null) return false;
@@ -154,11 +143,13 @@ public class DamageZone {
 
     // ── Getters / setters ─────────────────────────────────────────────────────
 
-    public String getZoneId()             { return zoneId; }
-    public String getShipId()             { return shipId; }
-    public int getCurrentHp()             { return currentHp; }
-    public int getMaxHp()                 { return maxHp; }
-    public boolean isDamaged()            { return damaged; }
-    public void setDamaged(boolean b)     { this.damaged = b; }
-    public void setMaxHp(int h)           { this.maxHp = h; }
+    public String getZoneId()               { return zoneId; }
+    public String getShipId()               { return shipId; }
+    public int getCurrentHp()               { return currentHp; }
+    public int getMaxHp()                   { return maxHp; }
+    public boolean isDamaged()              { return damaged; }
+    public void setDamaged(boolean b)       { this.damaged = b; }
+    public void setMaxHp(int h)             { this.maxHp = h; }
+    public int getDamageStageApplied()      { return damageStageApplied; }
+    public void setDamageStageApplied(int s){ this.damageStageApplied = s; }
 }

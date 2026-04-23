@@ -26,6 +26,12 @@ import java.util.concurrent.ConcurrentHashMap;
  *   Effects and announcements are routed only to players inside the damaged ship's
  *   registered bounding box via TacticalService.getPlayersOnShip(). Ships with no
  *   bounds configured silently skip player effects — they are not broadcast globally.
+ *
+ * Progressive damage:
+ *   After every zone hit, applyProgressiveDamage() is called on the zone.
+ *   DamageModelMapper evaluates the zone's HP% and advances block visuals to
+ *   the appropriate stage (light/heavy/destroyed) if the threshold has been crossed.
+ *   Stage advances are one-way — blocks only get worse until repairZone() is called.
  */
 public class HullDamageService {
 
@@ -280,6 +286,10 @@ public class HullDamageService {
                 + " on " + ship.getRegistryName()
                 + " (" + zone.getCurrentHp() + "/" + zone.getMaxHp() + " HP)");
 
+        // Apply progressive visual damage based on new HP level
+        ServerWorld realWorld = resolveShipWorld(ship, server);
+        DamageModelMapper.applyProgressiveDamage(zone, realWorld);
+
         if (zone.isDestroyed())
             onZoneDestroyed(encounter, ship, zone, server);
     }
@@ -295,6 +305,7 @@ public class HullDamageService {
 
         applyZoneSystemEffect(encounter, ship, zone, server);
 
+        // destroyZone handles model block removal + final stage 3 visuals
         ServerWorld realWorld = resolveShipWorld(ship, server);
         DamageModelMapper.destroyZone(zone, null, realWorld);
     }
@@ -326,7 +337,6 @@ public class HullDamageService {
             default                  -> "System damage reported.";
         };
 
-        // Broadcast only to crew on the damaged ship
         broadcastToShip(ship.getShipId(), server,
                 "[DAMAGE] " + effectMsg, Formatting.RED);
         encounter.log("[ZONE] " + zoneId + ": " + effectMsg);
@@ -396,7 +406,7 @@ public class HullDamageService {
         if (shipZones != null) {
             DamageZone zone = shipZones.get(zoneId);
             if (zone != null) {
-                zone.repair();
+                zone.repair(); // also resets damageStageApplied to 0
                 DamageModelMapper.restoreZone(zone, realWorld);
             }
         }
@@ -501,20 +511,11 @@ public class HullDamageService {
 
     // ── Ship-scoped helpers ───────────────────────────────────────────────────
 
-    /**
-     * Resolve the crew list for a ship. Falls back to an empty list if the ship
-     * has no bounds configured — effects are then silently skipped.
-     */
     private List<ServerPlayerEntity> resolveShipCrew(String shipId, MinecraftServer server) {
         if (server == null || tacticalService == null) return List.of();
         return tacticalService.getPlayersOnShip(shipId, server);
     }
 
-    /**
-     * Apply a status effect only to players inside the given damage zone's
-     * real-block bounding box, AND who are also on the ship (double-filtered).
-     * Zone bounds give local precision; ship bounds guard against cross-ship leakage.
-     */
     private void applyEffectToZone(MinecraftServer server,
                                    DamageZone zone,
                                    List<ServerPlayerEntity> shipCrew,
@@ -529,10 +530,6 @@ public class HullDamageService {
         }
     }
 
-    /**
-     * Apply a status effect to all crew on the ship (hull threshold events).
-     * Scoped to the ship's bounds — does NOT affect players on other ships.
-     */
     private void applyEffectToShip(String shipId, MinecraftServer server,
                                    net.minecraft.registry.entry.RegistryEntry<
                                            net.minecraft.entity.effect.StatusEffect> effect,
@@ -543,12 +540,6 @@ public class HullDamageService {
         }
     }
 
-    /**
-     * Broadcast a message only to crew on the specified ship.
-     * If the ship has no bounds configured, the message is not sent to anyone —
-     * it is not broadcast globally as a fallback. This is intentional: a ship
-     * without bounds is not configured for live play.
-     */
     private void broadcastToShip(String shipId, MinecraftServer server,
                                  String message, Formatting color) {
         if (server == null) return;
